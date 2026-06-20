@@ -10,7 +10,7 @@ import { rankSchemes } from '@/utils/calculations';
 import type { Suggestion, SchemeRankInfo } from '@/types';
 
 export const ResultPage: React.FC = () => {
-  const { result, suggestions, params, schemes, resultExpired, calculationVersion, lastVersionDiff, previousResult, adoptedFrom, goToStep, resetCalculation, saveScheme, adoptScheme, deleteScheme } = useCalculationStore();
+  const { result, suggestions, params, schemes, resultExpired, calculationVersion, lastVersionDiff, previousResult, adoptedFrom, lastVersionNote, goToStep, resetCalculation, saveScheme, adoptScheme, deleteScheme } = useCalculationStore();
   const [showCompare, setShowCompare] = useState(false);
   const [schemeLabel, setSchemeLabel] = useState('');
   const [showSaveInput, setShowSaveInput] = useState(false);
@@ -88,7 +88,35 @@ export const ResultPage: React.FC = () => {
             <Clock className="w-4 h-4" />
             版本变更（V{calculationVersion - 1} → V{calculationVersion}）
           </h4>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="bg-white rounded p-2 border border-primary-100">
+              <div className="text-xs text-gray-500">合格率变化</div>
+              <div className="text-lg font-bold text-gray-800">
+                {(previousResult.passedCount / previousResult.totalCount * 100).toFixed(0)}% → {(result.passedCount / result.totalCount * 100).toFixed(0)}%
+                <span className={`ml-1 text-xs ${result.passedCount >= previousResult.passedCount ? 'text-success-600' : 'text-danger-600'}`}>
+                  {result.passedCount >= previousResult.passedCount ? '↑' : '↓'}
+                  {Math.abs((result.passedCount - previousResult.passedCount) / previousResult.totalCount * 100).toFixed(0)}pp
+                </span>
+              </div>
+            </div>
+            <div className="bg-white rounded p-2 border border-primary-100">
+              <div className="text-xs text-gray-500">最薄弱项</div>
+              <div className="text-sm font-bold text-gray-800 truncate">
+                {previousResult.weakestItem} → {result.weakestItem}
+              </div>
+            </div>
+            <div className="bg-white rounded p-2 border border-primary-100">
+              <div className="text-xs text-gray-500">安全储备</div>
+              <div className="text-lg font-bold text-gray-800">
+                {(1 / previousResult.weakestSafetyRatio * 100).toFixed(0)}% → {(1 / result.weakestSafetyRatio * 100).toFixed(0)}%
+                <span className={`ml-1 text-xs ${result.weakestSafetyRatio < previousResult.weakestSafetyRatio ? 'text-success-600' : 'text-danger-600'}`}>
+                  {result.weakestSafetyRatio < previousResult.weakestSafetyRatio ? '↑好' : '↓差'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mb-2 text-xs text-gray-500 font-medium">主要参数变更：</div>
+          <div className="flex flex-wrap gap-2 mb-2">
             {lastVersionDiff.slice(0, 6).map(d => (
               <span key={d.field} className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded border ${d.isBetter === 'better' ? 'bg-success-50 text-success-700 border-success-200' : d.isBetter === 'worse' ? 'bg-danger-50 text-danger-700 border-danger-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
                 {d.label}: {d.oldValue}{d.unit} → {d.newValue}{d.unit}
@@ -97,7 +125,7 @@ export const ResultPage: React.FC = () => {
               </span>
             ))}
           </div>
-          <p className="text-xs text-primary-600 mt-2">
+          <p className="text-xs text-primary-600 mt-2 pt-2 border-t border-primary-100">
             结论变化：
             {result.overallPassed && !previousResult.overallPassed ? <span className="text-success-600 font-bold">从不通过变为通过 ✓</span>
               : !result.overallPassed && previousResult.overallPassed ? <span className="text-danger-600 font-bold">从通过变为不通过 ✗</span>
@@ -192,23 +220,31 @@ export const ResultPage: React.FC = () => {
             <div className="mb-4">
               <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2"><Trophy className="w-4 h-4 text-amber-500" />推荐排序</h4>
               <div className="space-y-2">
-                {rankedData.map(r => (
+                {rankedData.map(r => {
+                  const scheme = schemes.find(s => s.id === r.id);
+                  const vNote = r.id === '__current__' ? lastVersionNote : scheme?.versionNote;
+                  return (
                   <div key={r.id} className={`p-3 rounded-lg border-2 ${r.id === '__current__' ? 'border-primary-300 bg-primary-50' : 'border-gray-200 bg-white'} ${r.rankInfo.rank === 1 ? 'border-amber-300 bg-amber-50' : ''}`}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <span className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${r.rankInfo.rank === 1 ? 'bg-amber-500 text-white' : r.rankInfo.rank === 2 ? 'bg-gray-400 text-white' : 'bg-gray-200 text-gray-600'}`}>
                           {r.rankInfo.rank}
                         </span>
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-gray-800">{r.label}</span>
-                            {r.id === '__current__' && <span className="px-1.5 py-0.5 bg-primary-500 text-white text-xs rounded">当前</span>}
+                            <span className="font-bold text-gray-800 truncate">{r.label}</span>
+                            {r.id === '__current__' && <span className="px-1.5 py-0.5 bg-primary-500 text-white text-xs rounded flex-shrink-0">当前</span>}
                             {getRankBadge(r.rankInfo.rank)}
                           </div>
                           <p className="text-xs text-gray-500 mt-0.5">{r.rankInfo.reason}</p>
+                          {vNote && vNote !== '初始版本' && (
+                            <p className="text-xs text-gray-400 mt-1 truncate" title={vNote}>
+                              <span className="text-gray-400">版本备注：</span>{vNote}
+                            </p>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 flex-shrink-0">
                         <div className="text-right text-xs">
                           <div className="text-gray-500">推荐得分 <span className="font-bold text-gray-800 text-sm">{r.rankInfo.score}</span></div>
                           <div className="text-gray-400">合格率{r.rankInfo.passRate}% · 安全储备{r.rankInfo.safetyMargin}%</div>
@@ -221,7 +257,8 @@ export const ResultPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

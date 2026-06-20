@@ -1,6 +1,45 @@
 import { create } from 'zustand';
 import type { SupportType, SupportParams, ProjectInfo, CalculationResult, Suggestion, ValidationResult, SchemeRecord, ParamDiff } from '@/types';
-import { validateParams, hasValidationErrors, performCalculation, generateSuggestions, getParamSnapshot, getParamDiff, generateVersionNote } from '@/utils/calculations';
+import { validateParams, hasValidationErrors, performCalculation as doCalculation, generateSuggestions, getParamSnapshot, getParamDiff, generateVersionNote } from '@/utils/calculations';
+
+const STORAGE_KEY = 'template-support-calc-state';
+
+interface PersistState {
+  projectInfo: ProjectInfo;
+  params: SupportParams;
+  previousParams: SupportParams | null;
+  previousResult: CalculationResult | null;
+  result: CalculationResult | null;
+  suggestions: Suggestion[];
+  resultExpired: boolean;
+  resultParamSnapshot: string;
+  schemes: SchemeRecord[];
+  calculationVersion: number;
+  adoptedFrom: string | null;
+  lastVersionDiff: ParamDiff[];
+  lastVersionNote: string;
+  currentStep: 'input' | 'result' | 'report';
+  validationResults: ValidationResult[];
+}
+
+const loadPersistedState = (): Partial<PersistState> => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PersistState;
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+const savePersistedState = (state: PersistState) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+};
 
 interface CalculationState {
   projectInfo: ProjectInfo;
@@ -17,6 +56,7 @@ interface CalculationState {
   calculationVersion: number;
   adoptedFrom: string | null;
   lastVersionDiff: ParamDiff[];
+  lastVersionNote: string;
 
   setProjectInfo: (info: Partial<ProjectInfo>) => void;
   setSupportType: (type: SupportType) => void;
@@ -56,6 +96,8 @@ const initialParams: SupportParams = {
 
 const initialProjectInfo: ProjectInfo = { projectName: '', preparedBy: '', preparedDate: today };
 
+const persisted = loadPersistedState();
+
 const KEY_PARAMS: (keyof SupportParams)[] = [
   'supportType', 'floorHeight', 'slabThickness', 'beamWidth', 'beamHeight',
   'poleSpacingX', 'poleSpacingY', 'stepDistance', 'woodSize', 'steelPipeType',
@@ -64,20 +106,21 @@ const KEY_PARAMS: (keyof SupportParams)[] = [
 ];
 
 export const useCalculationStore = create<CalculationState>((set, get) => ({
-  projectInfo: initialProjectInfo,
-  params: initialParams,
-  previousParams: null,
-  previousResult: null,
-  validationResults: [],
-  result: null,
-  suggestions: [],
-  currentStep: 'input',
-  resultExpired: false,
-  resultParamSnapshot: '',
-  schemes: [],
-  calculationVersion: 0,
-  adoptedFrom: null,
-  lastVersionDiff: [],
+  projectInfo: persisted.projectInfo || initialProjectInfo,
+  params: persisted.params || initialParams,
+  previousParams: persisted.previousParams || null,
+  previousResult: persisted.previousResult || null,
+  validationResults: persisted.validationResults || [],
+  result: persisted.result || null,
+  suggestions: persisted.suggestions || [],
+  currentStep: persisted.currentStep || 'input',
+  resultExpired: persisted.resultExpired || false,
+  resultParamSnapshot: persisted.resultParamSnapshot || '',
+  schemes: persisted.schemes || [],
+  calculationVersion: persisted.calculationVersion || 0,
+  adoptedFrom: persisted.adoptedFrom || null,
+  lastVersionDiff: persisted.lastVersionDiff || [],
+  lastVersionNote: persisted.lastVersionNote || '',
 
   setProjectInfo: (info) => {
     set((state) => ({ projectInfo: { ...state.projectInfo, ...info } }));
@@ -115,12 +158,12 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       return false;
     }
     const oldParams = prevResult ? prevParams : null;
-    const newResult = performCalculation(params);
+    const newResult = doCalculation(params);
     const suggestions = generateSuggestions(params, newResult);
     const diff = oldParams ? getParamDiff(oldParams, params) : [];
     const versionNote = generateVersionNote(diff, prevResult, newResult);
     set({
-      previousParams: prevResult ? { ...params } : null,
+      previousParams: { ...params },
       previousResult: prevResult ? { ...prevResult } : null,
       result: newResult,
       suggestions,
@@ -131,6 +174,7 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       calculationVersion: get().calculationVersion + 1,
       lastVersionDiff: diff,
       adoptedFrom: null,
+      lastVersionNote: versionNote,
     });
     return true;
   },
@@ -164,11 +208,12 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       calculationVersion: 0,
       adoptedFrom: null,
       lastVersionDiff: [],
+      lastVersionNote: '',
     });
   },
 
   saveScheme: (label) => {
-    const { params, result, suggestions, calculationVersion, adoptedFrom } = get();
+    const { params, result, suggestions, calculationVersion, adoptedFrom, lastVersionNote } = get();
     if (!result) return;
     const scheme: SchemeRecord = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -180,6 +225,7 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       version: calculationVersion,
       paramSnapshot: getParamSnapshot(params),
       adoptedFrom: adoptedFrom || undefined,
+      versionNote: lastVersionNote || '初始版本',
     };
     set((state) => ({ schemes: [...state.schemes, scheme] }));
   },
@@ -207,3 +253,24 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
     set({ schemes: [] });
   },
 }));
+
+useCalculationStore.subscribe((state) => {
+  const persist: PersistState = {
+    projectInfo: state.projectInfo,
+    params: state.params,
+    previousParams: state.previousParams,
+    previousResult: state.previousResult,
+    result: state.result,
+    suggestions: state.suggestions,
+    resultExpired: state.resultExpired,
+    resultParamSnapshot: state.resultParamSnapshot,
+    schemes: state.schemes,
+    calculationVersion: state.calculationVersion,
+    adoptedFrom: state.adoptedFrom,
+    lastVersionDiff: state.lastVersionDiff,
+    lastVersionNote: state.lastVersionNote,
+    currentStep: state.currentStep,
+    validationResults: state.validationResults,
+  };
+  savePersistedState(persist);
+});

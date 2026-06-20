@@ -6,7 +6,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { useCalculationStore } from '@/store/calculationStore';
 import { getSupportTypeConfig, getFieldsForType } from '@/utils/materials';
-import { generateReportEnhancement, generateComparisonSummary, rankSchemes, getMostDiffSchemes, getParamDiff } from '@/utils/calculations';
+import { generateReportEnhancement, generateComparisonSummary, rankSchemes, getMostDiffSchemes, getParamDiff, generateSchemeConclusion } from '@/utils/calculations';
 import type { Suggestion, SupportParams } from '@/types';
 
 const paramLabels: Record<string, string> = {
@@ -25,7 +25,7 @@ const paramUnits: Record<string, string> = {
 };
 
 export const ReportPage: React.FC = () => {
-  const { projectInfo, params, result, suggestions, schemes, calculationVersion, adoptedFrom, goToStep } = useCalculationStore();
+  const { projectInfo, params, result, suggestions, schemes, calculationVersion, adoptedFrom, lastVersionNote, goToStep } = useCalculationStore();
   const reportRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -150,11 +150,6 @@ export const ReportPage: React.FC = () => {
             {schemes.length > 0 && (
               <>
                 <div>
-                  <h4 className="font-bold text-gray-700 mb-2">方案比选结论</h4>
-                  <p className="text-gray-600 pl-4">{comparisonSummary}</p>
-                </div>
-
-                <div>
                   <h4 className="font-bold text-gray-700 mb-2">各方案对比表</h4>
                   <table className="w-full text-xs border-collapse ml-4" style={{ maxWidth: '95%' }}>
                     <thead>
@@ -167,6 +162,7 @@ export const ReportPage: React.FC = () => {
                         <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">合格率</th>
                         <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">最薄弱项</th>
                         <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">结论</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-left">版本备注</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -179,6 +175,7 @@ export const ReportPage: React.FC = () => {
                         <td className="py-1.5 px-2 border border-gray-200 text-center">{((passedCount / totalCount) * 100).toFixed(0)}%</td>
                         <td className="py-1.5 px-2 border border-gray-200 text-center text-xs">{result.weakestItem}</td>
                         <td className="py-1.5 px-2 border border-gray-200 text-center">{result.overallPassed ? <span className="text-green-700 font-bold">通过</span> : <span className="text-red-700 font-bold">不通过</span>}</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-left text-gray-500" style={{ maxWidth: '180px' }}>{lastVersionNote || '初始版本'}</td>
                       </tr>
                       {schemes.map(s => (
                         <tr key={s.id}>
@@ -190,23 +187,19 @@ export const ReportPage: React.FC = () => {
                           <td className="py-1.5 px-2 border border-gray-200 text-center">{(s.result.passedCount / s.result.totalCount * 100).toFixed(0)}%</td>
                           <td className="py-1.5 px-2 border border-gray-200 text-center text-xs">{s.result.weakestItem}</td>
                           <td className="py-1.5 px-2 border border-gray-200 text-center">{s.result.overallPassed ? <span className="text-green-700">通过</span> : <span className="text-red-700">不通过</span>}</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-left text-gray-500" style={{ maxWidth: '180px' }}>{s.versionNote || '初始版本'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
 
-                {bestScheme && bestScheme.id !== '__current__' && (
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded">
-                    <h4 className="font-bold text-amber-700 mb-1">★ 推荐方案</h4>
-                    <p className="text-amber-700 pl-4 text-sm">
-                      综合推荐方案为"<strong>{bestScheme.label}</strong>"（排名第{bestScheme.rankInfo.rank}，推荐得分{bestScheme.rankInfo.score}）。
-                      推荐理由：{bestScheme.rankInfo.reason}。
-                      与当前方案相比，主要差异：
-                      {getParamDiff(params, schemes.find(s => s.id === bestScheme.id)?.params || params).slice(0, 3).map(d => `${d.label}从${d.oldValue}${d.unit}调整为${d.newValue}${d.unit}`).join('、')}。
-                    </p>
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded">
+                  <h4 className="font-bold text-amber-700 mb-2">★ 方案比选结论</h4>
+                  <div className="text-amber-800 text-sm leading-relaxed whitespace-pre-line pl-4">
+                    {generateSchemeConclusion(result, suggestions, schemes, adoptedFrom)}
                   </div>
-                )}
+                </div>
 
                 {mostDiff.length > 0 && (
                   <div>

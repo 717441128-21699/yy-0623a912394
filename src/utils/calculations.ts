@@ -405,3 +405,82 @@ export const getMostDiffSchemes = (params: SupportParams, schemes: SchemeRecord[
   scored.sort((a, b) => b.diffCount - a.diffCount);
   return scored.slice(0, count).map(s => s.scheme);
 };
+
+export const generateSchemeConclusion = (
+  currentResult: CalculationResult,
+  currentSuggestions: Suggestion[],
+  schemes: SchemeRecord[],
+  adoptedFrom: string | null
+): string => {
+  if (schemes.length === 0) {
+    return `本工程模板支撑体系经测算，当前方案共 ${currentResult.totalCount} 项验算项，合格 ${currentResult.passedCount} 项，合格率 ${(currentResult.passedCount / currentResult.totalCount * 100).toFixed(0)}%，${currentResult.overallPassed ? '各项指标均满足规范要求，方案可行' : '存在不满足规范要求的验算项，需调整参数后重新验算'}。本次仅进行单方案验算，未开展多方案比选工作。`;
+  }
+
+  const ranked = rankSchemes({ result: currentResult, suggestions: currentSuggestions, label: '当前方案' }, schemes);
+  const currentRank = ranked.find(r => r.id === '__current__');
+  const bestRank = ranked[0];
+  const isCurrentBest = bestRank?.id === '__current__';
+
+  const paragraphs: string[] = [];
+
+  const p1: string[] = [];
+  p1.push(`为确保模板支撑体系安全可靠、经济合理，本次共比选 ${schemes.length + 1} 组支撑方案（含当前采用方案），`);
+  p1.push(`分别从承载力、刚度、稳定性、构造措施等方面进行综合验算。`);
+  if (adoptedFrom) {
+    p1.push(`当前方案系在"${adoptedFrom}"基础上调整优化后形成。`);
+  }
+  paragraphs.push(p1.join(''));
+
+  const p2: string[] = [];
+  p2.push(`经综合比选，`);
+  if (isCurrentBest) {
+    p2.push(`当前方案综合评分 ${bestRank.rankInfo.score} 分，在所有方案中排名第 1，为最优方案，`);
+    p2.push(`其主要优势为${bestRank.rankInfo.reason}。`);
+  } else {
+    p2.push(`推荐方案为"${bestRank.label}"，综合评分 ${bestRank.rankInfo.score} 分，排名第 1，`);
+    p2.push(`${bestRank.rankInfo.reason}；`);
+    p2.push(`当前方案综合评分 ${currentRank?.rankInfo.score} 分，排名第 ${currentRank?.rankInfo.rank}，${currentRank?.rankInfo.reason}。`);
+  }
+  paragraphs.push(p2.join(''));
+
+  const otherSchemes = ranked.filter(r => r.id !== bestRank.id && r.id !== '__current__');
+  if (otherSchemes.length > 0) {
+    const p3: string[] = [];
+    p3.push(`其余方案不推荐采用的主要原因：`);
+    const reasons = otherSchemes.slice(0, 3).map(r => {
+      const s = schemes.find(s => s.id === r.id);
+      const reasonParts: string[] = [];
+      if (!r.rankInfo || !r.rankInfo.safetyLevel) return '';
+      if (r.rankInfo.safetyLevel === 'overLimit') {
+        reasonParts.push(`${r.label}存在超限项，安全储备不足`);
+      } else if (r.rankInfo.safetyLevel === 'critical') {
+        reasonParts.push(`${r.label}安全储备偏低，处于临界状态`);
+      }
+      if (r.rankInfo.highIssueCount > 0) {
+        reasonParts.push(`${r.label}需 ${r.rankInfo.highIssueCount} 项高级别整改`);
+      }
+      if (s && s.result.passedCount < currentResult.passedCount) {
+        reasonParts.push(`合格率较当前方案低 ${(currentResult.passedCount - s.result.passedCount)} 项`);
+      }
+      return reasonParts.length > 0 ? `${r.label}：${reasonParts.join('、')}` : '';
+    }).filter(Boolean);
+    if (reasons.length > 0) {
+      p3.push(reasons.join('；') + '。');
+    } else {
+      p3.push('其余方案在安全储备或经济性方面综合表现弱于推荐方案。');
+    }
+    paragraphs.push(p3.join(''));
+  }
+
+  const p4: string[] = [];
+  if (currentResult.overallPassed) {
+    p4.push(`综上所述，当前模板支撑方案${isCurrentBest ? '为最优方案，' : ''}各项验算均满足规范要求，`);
+    p4.push(`可用于指导现场施工。施工过程中应严格按照方案参数执行，确保立杆间距、步距、剪刀撑设置等关键参数与计算书一致。`);
+  } else {
+    p4.push(`综上所述，当前模板支撑方案尚不能完全满足规范要求，建议按整改意见调整参数后重新验算，`);
+    p4.push(`或采用推荐方案作为施工依据。`);
+  }
+  paragraphs.push(p4.join(''));
+
+  return paragraphs.join('\n\n');
+};
