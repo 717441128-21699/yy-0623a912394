@@ -6,7 +6,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { useCalculationStore } from '@/store/calculationStore';
 import { getSupportTypeConfig, getFieldsForType } from '@/utils/materials';
-import { generateReportEnhancement } from '@/utils/calculations';
+import { generateReportEnhancement, generateComparisonSummary } from '@/utils/calculations';
 import type { Suggestion, SupportParams } from '@/types';
 
 const paramLabels: Record<string, string> = {
@@ -25,7 +25,7 @@ const paramUnits: Record<string, string> = {
 };
 
 export const ReportPage: React.FC = () => {
-  const { projectInfo, params, result, suggestions, goToStep } = useCalculationStore();
+  const { projectInfo, params, result, suggestions, schemes, calculationVersion, goToStep } = useCalculationStore();
   const reportRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -44,6 +44,7 @@ export const ReportPage: React.FC = () => {
 
   const config = getSupportTypeConfig(params.supportType);
   const enhancement = generateReportEnhancement(params, result);
+  const comparisonSummary = generateComparisonSummary(params, result, suggestions, schemes);
   const fields = getFieldsForType(params.supportType);
   const passedCount = result.passedCount;
   const totalCount = result.totalCount;
@@ -112,7 +113,7 @@ export const ReportPage: React.FC = () => {
       <div ref={reportRef} className="bg-white mx-auto shadow-lg" style={{ width: '210mm', minHeight: '297mm', padding: '20mm' }}>
         <div className="text-center mb-8 pb-4 border-b-2 border-gray-800">
           <h1 className="text-2xl font-bold text-gray-900 mb-1">模板支撑安全验算书</h1>
-          <p className="text-gray-500 text-sm">Template Support Safety Calculation Report</p>
+          <p className="text-gray-500 text-sm">Template Support Safety Calculation Report · V{calculationVersion}</p>
           <p className="text-gray-400 text-xs mt-1">（专项施工方案附件草稿）</p>
         </div>
 
@@ -129,7 +130,55 @@ export const ReportPage: React.FC = () => {
         </div>
 
         <div className="mb-8">
-          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">二、方案摘要</h2>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">二、方案版本与比选</h2>
+          <div className="space-y-3 text-sm">
+            <div>
+              <h4 className="font-bold text-gray-700 mb-1">当前工况版本</h4>
+              <p className="text-gray-600 pl-4">本计算书基于第 <strong>V{calculationVersion}</strong> 版验算结果生成，支撑类型为{config?.name}，立杆纵距{params.poleSpacingX}m、横距{params.poleSpacingY}m、步距{params.stepDistance}m。</p>
+            </div>
+            {schemes.length > 0 && (
+              <div>
+                <h4 className="font-bold text-gray-700 mb-1">方案比选结论</h4>
+                <p className="text-gray-600 pl-4">{comparisonSummary}</p>
+                <table className="w-full text-xs border-collapse mt-2 ml-4" style={{ maxWidth: '90%' }}>
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="py-1 px-2 border border-gray-200 font-medium text-left">方案</th>
+                      <th className="py-1 px-2 border border-gray-200 font-medium text-center">版本</th>
+                      <th className="py-1 px-2 border border-gray-200 font-medium text-center">合格率</th>
+                      <th className="py-1 px-2 border border-gray-200 font-medium text-center">结论</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="bg-primary-50">
+                      <td className="py-1 px-2 border border-gray-200 font-medium">当前方案</td>
+                      <td className="py-1 px-2 border border-gray-200 text-center font-mono">V{calculationVersion}</td>
+                      <td className="py-1 px-2 border border-gray-200 text-center">{((passedCount / totalCount) * 100).toFixed(0)}%</td>
+                      <td className="py-1 px-2 border border-gray-200 text-center">{result.overallPassed ? <span className="text-green-700">通过</span> : <span className="text-red-700">不通过</span>}</td>
+                    </tr>
+                    {schemes.map(s => (
+                      <tr key={s.id}>
+                        <td className="py-1 px-2 border border-gray-200">{s.label}</td>
+                        <td className="py-1 px-2 border border-gray-200 text-center font-mono">V{s.version}</td>
+                        <td className="py-1 px-2 border border-gray-200 text-center">{(s.result.passedCount / s.result.totalCount * 100).toFixed(0)}%</td>
+                        <td className="py-1 px-2 border border-gray-200 text-center">{s.result.overallPassed ? <span className="text-green-700">通过</span> : <span className="text-red-700">不通过</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {schemes.length === 0 && (
+              <div>
+                <h4 className="font-bold text-gray-700 mb-1">方案比选</h4>
+                <p className="text-gray-500 pl-4">本方案为当前唯一验算工况，未进行方案比选。</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-8">
+          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">三、方案摘要</h2>
           <div className="space-y-3 text-sm">
             <div>
               <h4 className="font-bold text-gray-700 mb-1 flex items-center gap-2"><BookOpen className="w-4 h-4 text-primary-500" />采用规范</h4>
@@ -155,7 +204,7 @@ export const ReportPage: React.FC = () => {
         </div>
 
         <div className="mb-8">
-          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">三、计算参数</h2>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">四、计算参数</h2>
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-gray-100">
@@ -177,7 +226,7 @@ export const ReportPage: React.FC = () => {
         </div>
 
         <div className="mb-8">
-          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">四、验算结论</h2>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">五、验算结论</h2>
           <div className={`p-4 mb-4 rounded ${result.overallPassed ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
             <div className="flex items-center gap-3">
               {result.overallPassed ? <CheckCircle className="w-8 h-8 text-green-600" /> : <XCircle className="w-8 h-8 text-red-600" />}
@@ -220,7 +269,7 @@ export const ReportPage: React.FC = () => {
         </div>
 
         <div className="mb-8">
-          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">五、验算过程摘要</h2>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">六、验算过程摘要</h2>
           {result.items.map((item, idx) => (
             <div key={idx} className="mb-4 p-4 bg-gray-50 rounded">
               <h4 className="font-bold text-gray-700 mb-2">{idx + 1}. {item.name}</h4>
@@ -232,7 +281,7 @@ export const ReportPage: React.FC = () => {
 
         {suggestions.length > 0 && (
           <div className="mb-8">
-            <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">六、整改建议</h2>
+            <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">七、整改建议</h2>
             <div className="space-y-3">
               {suggestions.map((s, i) => (
                 <div key={i} className={`p-4 rounded border ${s.priority === 'high' ? 'bg-red-50 border-red-200' : s.priority === 'medium' ? 'bg-yellow-50 border-yellow-200' : 'bg-blue-50 border-blue-200'}`}>
@@ -256,7 +305,7 @@ export const ReportPage: React.FC = () => {
         )}
 
         <div className="mb-8">
-          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">七、审核提示</h2>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">八、审核提示</h2>
           <div className="p-4 bg-amber-50 border border-amber-300 rounded">
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />

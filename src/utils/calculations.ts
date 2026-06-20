@@ -1,4 +1,4 @@
-import type { SupportParams, CalculationResult, CheckItemResult, Suggestion, ValidationResult, ReportEnhancement } from '@/types';
+import type { SupportParams, CalculationResult, CheckItemResult, Suggestion, ValidationResult, ReportEnhancement, SchemeRecord, SchemeRankInfo } from '@/types';
 import { getWoodProperty, getSteelPipeProperty, getParamRange, getFieldsForType, getSupportTypeConfig, CONCRETE_DENSITY, SAFETY_FACTOR, FASTENER_SLIP_RESISTANCE } from './materials';
 
 const fmt = (n: number, d: number = 3): number => Number(n.toFixed(d));
@@ -239,6 +239,75 @@ export const generateReportEnhancement = (params: SupportParams, result: Calcula
 };
 
 export const getParamSnapshot = (params: SupportParams): string => {
-  const keys: (keyof SupportParams)[] = ['supportType', 'poleSpacingX', 'poleSpacingY', 'stepDistance', 'woodSize', 'steelPipeType', 'constructionLoad', 'slabThickness', 'topCantilever'];
+  const keys: (keyof SupportParams)[] = [
+    'supportType', 'poleSpacingX', 'poleSpacingY', 'stepDistance', 'woodSize', 'steelPipeType',
+    'constructionLoad', 'slabThickness', 'topCantilever', 'floorHeight', 'beamWidth', 'beamHeight',
+    'templateThickness', 'templateElasticModulus', 'diagonalBrace', 'scissorsBrace', 'sweepPole',
+  ];
   return keys.map(k => `${k}=${params[k]}`).join('|');
+};
+
+export const rankSchemes = (current: { result: CalculationResult; suggestions: Suggestion[]; label: string }, saved: SchemeRecord[]): { id: string; label: string; rankInfo: SchemeRankInfo }[] => {
+  const all = [
+    { id: '__current__', label: current.label, result: current.result, suggestions: current.suggestions },
+    ...saved.map(s => ({ id: s.id, label: s.label, result: s.result, suggestions: s.suggestions })),
+  ];
+
+  const scored = all.map(a => {
+    const passRate = a.result.totalCount > 0 ? a.result.passedCount / a.result.totalCount : 0;
+    const safetyMargin = a.result.weakestSafetyRatio > 0 ? 1 / a.result.weakestSafetyRatio : 0;
+    const highCount = a.suggestions.filter(s => s.priority === 'high').length;
+    const score = passRate * 500 + safetyMargin * 300 - highCount * 100 + (a.result.overallPassed ? 200 : 0);
+    const reasons: string[] = [];
+    if (a.result.overallPassed) reasons.push('全部验算通过');
+    else reasons.push(`有${a.result.totalCount - a.result.passedCount}项不通过`);
+    if (safetyMargin >= 0.3) reasons.push('安全储备充足');
+    else if (safetyMargin >= 0.15) reasons.push('安全储备尚可');
+    else reasons.push('安全储备偏低');
+    if (highCount === 0) reasons.push('无高级别整改项');
+    else reasons.push(`${highCount}项高级别整改`);
+    return { id: a.id, label: a.label, score, passRate, safetyMargin, highCount, reason: reasons.join('，') };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map((s, i) => ({
+    id: s.id,
+    label: s.label,
+    rankInfo: {
+      rank: i + 1,
+      score: fmt(s.score, 1),
+      reason: s.reason,
+      passRate: fmt(s.passRate * 100, 1),
+      safetyMargin: fmt(s.safetyMargin * 100, 1),
+      highIssueCount: s.highCount,
+    },
+  }));
+};
+
+export const generateComparisonSummary = (params: SupportParams, result: CalculationResult, suggestions: Suggestion[], schemes: SchemeRecord[]): string => {
+  if (schemes.length === 0) return '本方案为当前唯一验算工况，未进行方案比选。';
+  const ranked = rankSchemes({ result, suggestions, label: '当前方案' }, schemes);
+  const currentRank = ranked.find(r => r.id === '__current__');
+  const bestRank = ranked[0];
+  const parts: string[] = [];
+  parts.push(`本次共比选${schemes.length + 1}组工况（含当前方案）。`);
+  if (currentRank) {
+    parts.push(`当前方案在比选中排名第${currentRank.rankInfo.rank}（推荐得分${currentRank.rankInfo.score}），${currentRank.rankInfo.reason}。`);
+  }
+  if (bestRank && bestRank.id !== '__current__') {
+    parts.push(`推荐方案为"${bestRank.label}"（排名第1），${bestRank.rankInfo.reason}。`);
+  } else if (bestRank && bestRank.id === '__current__') {
+    parts.push('当前方案为推荐方案，综合表现最优。');
+  }
+  const diffItems: string[] = [];
+  schemes.forEach(s => {
+    const diff: string[] = [];
+    if (s.params.poleSpacingX !== params.poleSpacingX) diff.push(`纵距${s.params.poleSpacingX}m vs ${params.poleSpacingX}m`);
+    if (s.params.poleSpacingY !== params.poleSpacingY) diff.push(`横距${s.params.poleSpacingY}m vs ${params.poleSpacingY}m`);
+    if (s.params.stepDistance !== params.stepDistance) diff.push(`步距${s.params.stepDistance}m vs ${params.stepDistance}m`);
+    if (s.params.woodSize !== params.woodSize) diff.push(`木方${s.params.woodSize} vs ${params.woodSize}`);
+    if (diff.length > 0) diffItems.push(`"${s.label}"：${diff.join('，')}`);
+  });
+  if (diffItems.length > 0) parts.push(`主要参数差异：${diffItems.join('；')}。`);
+  return parts.join('');
 };

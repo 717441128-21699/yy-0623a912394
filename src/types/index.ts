@@ -71,6 +71,16 @@ export interface SchemeRecord {
   result: CalculationResult;
   suggestions: Suggestion[];
   savedAt: string;
+  version: number;
+}
+
+export interface SchemeRankInfo {
+  rank: number;
+  score: number;
+  reason: string;
+  passRate: number;
+  safetyMargin: number;
+  highIssueCount: number;
 }
 
 export interface MaterialProperty {

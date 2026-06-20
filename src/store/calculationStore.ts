@@ -12,6 +12,7 @@ interface CalculationState {
   resultExpired: boolean;
   resultParamSnapshot: string;
   schemes: SchemeRecord[];
+  calculationVersion: number;
 
   setProjectInfo: (info: Partial<ProjectInfo>) => void;
   setSupportType: (type: SupportType) => void;
@@ -48,16 +49,13 @@ const initialParams: SupportParams = {
   topCantilever: 300,
 };
 
-const initialProjectInfo: ProjectInfo = {
-  projectName: '',
-  preparedBy: '',
-  preparedDate: today,
-};
+const initialProjectInfo: ProjectInfo = { projectName: '', preparedBy: '', preparedDate: today };
 
 const KEY_PARAMS: (keyof SupportParams)[] = [
   'supportType', 'floorHeight', 'slabThickness', 'beamWidth', 'beamHeight',
   'poleSpacingX', 'poleSpacingY', 'stepDistance', 'woodSize', 'steelPipeType',
-  'constructionLoad', 'templateThickness', 'topCantilever',
+  'constructionLoad', 'templateThickness', 'templateElasticModulus', 'topCantilever',
+  'diagonalBrace', 'scissorsBrace', 'sweepPole',
 ];
 
 export const useCalculationStore = create<CalculationState>((set, get) => ({
@@ -70,6 +68,7 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
   resultExpired: false,
   resultParamSnapshot: '',
   schemes: [],
+  calculationVersion: 0,
 
   setProjectInfo: (info) => {
     set((state) => ({ projectInfo: { ...state.projectInfo, ...info } }));
@@ -115,12 +114,16 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       resultExpired: false,
       resultParamSnapshot: getParamSnapshot(params),
       validationResults: validation,
+      calculationVersion: get().calculationVersion + 1,
     });
     return true;
   },
 
   resetCalculation: () => {
-    set({ result: null, suggestions: [], currentStep: 'input', resultExpired: false });
+    set((state) => ({
+      currentStep: 'input',
+      resultExpired: state.result ? true : state.resultExpired,
+    }));
   },
 
   goToStep: (step) => {
@@ -140,11 +143,12 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       currentStep: 'input',
       resultExpired: false,
       resultParamSnapshot: '',
+      calculationVersion: 0,
     });
   },
 
   saveScheme: (label) => {
-    const { params, result, suggestions } = get();
+    const { params, result, suggestions, calculationVersion } = get();
     if (!result) return;
     const scheme: SchemeRecord = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -153,6 +157,7 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       result: { ...result },
       suggestions: [...suggestions],
       savedAt: new Date().toLocaleString('zh-CN'),
+      version: calculationVersion,
     };
     set((state) => ({ schemes: [...state.schemes, scheme] }));
   },

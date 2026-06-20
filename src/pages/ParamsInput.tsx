@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Calculator, RotateCcw, Building2, User, Calendar, AlertTriangle } from 'lucide-react';
+import { Calculator, RotateCcw, Building2, User, Calendar, AlertTriangle, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useCalculationStore } from '@/store/calculationStore';
 import { SupportTypeSelector } from '@/components/SupportTypeSelector';
 import { FormInput } from '@/components/FormInput';
@@ -15,6 +15,8 @@ export const ParamsInput: React.FC = () => {
     validationResults,
     resultExpired,
     result,
+    suggestions,
+    calculationVersion,
     setProjectInfo,
     setSupportType,
     setParam,
@@ -69,11 +71,30 @@ export const ParamsInput: React.FC = () => {
   return (
     <div className="container mx-auto px-4 py-6">
       {resultExpired && result && (
-        <div className="mb-4 p-4 bg-warning-50 border-2 border-warning-300 flex items-center gap-3">
-          <AlertTriangle className="w-5 h-5 text-warning-500 flex-shrink-0" />
-          <div>
-            <p className="font-bold text-warning-700">验算结果已过期</p>
-            <p className="text-sm text-warning-600">参数已修改，当前验算结果不再有效。请重新点击"开始验算"获取最新结果。</p>
+        <div className="mb-4 p-4 bg-warning-50 border-2 border-warning-300">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-warning-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-bold text-warning-700">验算结果已过期（基于修改前参数）</p>
+              <p className="text-sm text-warning-600 mb-2">参数已修改，请重新点击"开始验算"获取最新结果。</p>
+              <div className="p-3 bg-white/60 rounded border border-warning-200 text-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <Clock className="w-3.5 h-3.5 text-gray-400" />
+                  <span className="text-gray-500">上一版结果（V{calculationVersion}）：</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="flex items-center gap-1">
+                    {result.overallPassed ? <CheckCircle className="w-3.5 h-3.5 text-green-500" /> : <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                    {result.overallPassed ? '验算通过' : '验算未通过'}
+                  </span>
+                  <span>合格率 {((result.passedCount / result.totalCount) * 100).toFixed(0)}%</span>
+                  <span>最薄弱项：{result.weakestItem}</span>
+                  {suggestions.filter(s => s.priority === 'high').length > 0 && (
+                    <span className="text-danger-600">{suggestions.filter(s => s.priority === 'high').length}项高级别整改</span>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
