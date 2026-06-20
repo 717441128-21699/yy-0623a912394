@@ -6,7 +6,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { useCalculationStore } from '@/store/calculationStore';
 import { getSupportTypeConfig, getFieldsForType } from '@/utils/materials';
-import { generateReportEnhancement, generateComparisonSummary } from '@/utils/calculations';
+import { generateReportEnhancement, generateComparisonSummary, rankSchemes, getMostDiffSchemes, getParamDiff } from '@/utils/calculations';
 import type { Suggestion, SupportParams } from '@/types';
 
 const paramLabels: Record<string, string> = {
@@ -25,7 +25,7 @@ const paramUnits: Record<string, string> = {
 };
 
 export const ReportPage: React.FC = () => {
-  const { projectInfo, params, result, suggestions, schemes, calculationVersion, goToStep } = useCalculationStore();
+  const { projectInfo, params, result, suggestions, schemes, calculationVersion, adoptedFrom, goToStep } = useCalculationStore();
   const reportRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -45,6 +45,9 @@ export const ReportPage: React.FC = () => {
   const config = getSupportTypeConfig(params.supportType);
   const enhancement = generateReportEnhancement(params, result);
   const comparisonSummary = generateComparisonSummary(params, result, suggestions, schemes);
+  const rankedSchemes = rankSchemes({ result, suggestions, label: '当前方案' }, schemes);
+  const bestScheme = rankedSchemes.find(r => r.id !== '__current__');
+  const mostDiff = getMostDiffSchemes(params, schemes, 2);
   const fields = getFieldsForType(params.supportType);
   const passedCount = result.passedCount;
   const totalCount = result.totalCount;
@@ -131,43 +134,109 @@ export const ReportPage: React.FC = () => {
 
         <div className="mb-8">
           <h2 className="text-lg font-bold text-gray-800 mb-4 pb-2 border-b border-gray-300">二、方案版本与比选</h2>
-          <div className="space-y-3 text-sm">
+          <div className="space-y-4 text-sm">
             <div>
               <h4 className="font-bold text-gray-700 mb-1">当前工况版本</h4>
-              <p className="text-gray-600 pl-4">本计算书基于第 <strong>V{calculationVersion}</strong> 版验算结果生成，支撑类型为{config?.name}，立杆纵距{params.poleSpacingX}m、横距{params.poleSpacingY}m、步距{params.stepDistance}m。</p>
+              <p className="text-gray-600 pl-4">本计算书基于第 <strong>V{calculationVersion}</strong> 版验算结果生成，支撑类型为{config?.name}，立杆纵距{params.poleSpacingX}m、横距{params.poleSpacingY}m、步距{params.stepDistance}m，合格率 {((passedCount / totalCount) * 100).toFixed(0)}%，结论为<strong>{result.overallPassed ? '验算通过' : '验算未通过'}</strong>。</p>
             </div>
-            {schemes.length > 0 && (
-              <div>
-                <h4 className="font-bold text-gray-700 mb-1">方案比选结论</h4>
-                <p className="text-gray-600 pl-4">{comparisonSummary}</p>
-                <table className="w-full text-xs border-collapse mt-2 ml-4" style={{ maxWidth: '90%' }}>
-                  <thead>
-                    <tr className="bg-gray-100">
-                      <th className="py-1 px-2 border border-gray-200 font-medium text-left">方案</th>
-                      <th className="py-1 px-2 border border-gray-200 font-medium text-center">版本</th>
-                      <th className="py-1 px-2 border border-gray-200 font-medium text-center">合格率</th>
-                      <th className="py-1 px-2 border border-gray-200 font-medium text-center">结论</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="bg-primary-50">
-                      <td className="py-1 px-2 border border-gray-200 font-medium">当前方案</td>
-                      <td className="py-1 px-2 border border-gray-200 text-center font-mono">V{calculationVersion}</td>
-                      <td className="py-1 px-2 border border-gray-200 text-center">{((passedCount / totalCount) * 100).toFixed(0)}%</td>
-                      <td className="py-1 px-2 border border-gray-200 text-center">{result.overallPassed ? <span className="text-green-700">通过</span> : <span className="text-red-700">不通过</span>}</td>
-                    </tr>
-                    {schemes.map(s => (
-                      <tr key={s.id}>
-                        <td className="py-1 px-2 border border-gray-200">{s.label}</td>
-                        <td className="py-1 px-2 border border-gray-200 text-center font-mono">V{s.version}</td>
-                        <td className="py-1 px-2 border border-gray-200 text-center">{(s.result.passedCount / s.result.totalCount * 100).toFixed(0)}%</td>
-                        <td className="py-1 px-2 border border-gray-200 text-center">{s.result.overallPassed ? <span className="text-green-700">通过</span> : <span className="text-red-700">不通过</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+            {adoptedFrom && (
+              <div className="p-3 bg-primary-50 border border-primary-200 rounded">
+                <h4 className="font-bold text-primary-700 mb-1">采用方案说明</h4>
+                <p className="text-primary-600 pl-4">本方案采用自已保存方案"<strong>{adoptedFrom}</strong>"，经调整参数后验算生成。原始方案参数已作为比选基础纳入对比。</p>
               </div>
             )}
+
+            {schemes.length > 0 && (
+              <>
+                <div>
+                  <h4 className="font-bold text-gray-700 mb-2">方案比选结论</h4>
+                  <p className="text-gray-600 pl-4">{comparisonSummary}</p>
+                </div>
+
+                <div>
+                  <h4 className="font-bold text-gray-700 mb-2">各方案对比表</h4>
+                  <table className="w-full text-xs border-collapse ml-4" style={{ maxWidth: '95%' }}>
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-left">方案</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">版本</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">纵距</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">横距</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">步距</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">合格率</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">最薄弱项</th>
+                        <th className="py-1.5 px-2 border border-gray-200 font-medium text-center">结论</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-primary-50 font-medium">
+                        <td className="py-1.5 px-2 border border-gray-200">当前方案 ▲</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">V{calculationVersion}</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">{params.poleSpacingX}m</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">{params.poleSpacingY}m</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">{params.stepDistance}m</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-center">{((passedCount / totalCount) * 100).toFixed(0)}%</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-center text-xs">{result.weakestItem}</td>
+                        <td className="py-1.5 px-2 border border-gray-200 text-center">{result.overallPassed ? <span className="text-green-700 font-bold">通过</span> : <span className="text-red-700 font-bold">不通过</span>}</td>
+                      </tr>
+                      {schemes.map(s => (
+                        <tr key={s.id}>
+                          <td className="py-1.5 px-2 border border-gray-200">{s.label}</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">V{s.version}</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">{s.params.poleSpacingX}m</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">{s.params.poleSpacingY}m</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-center font-mono">{s.params.stepDistance}m</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-center">{(s.result.passedCount / s.result.totalCount * 100).toFixed(0)}%</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-center text-xs">{s.result.weakestItem}</td>
+                          <td className="py-1.5 px-2 border border-gray-200 text-center">{s.result.overallPassed ? <span className="text-green-700">通过</span> : <span className="text-red-700">不通过</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {bestScheme && bestScheme.id !== '__current__' && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded">
+                    <h4 className="font-bold text-amber-700 mb-1">★ 推荐方案</h4>
+                    <p className="text-amber-700 pl-4 text-sm">
+                      综合推荐方案为"<strong>{bestScheme.label}</strong>"（排名第{bestScheme.rankInfo.rank}，推荐得分{bestScheme.rankInfo.score}）。
+                      推荐理由：{bestScheme.rankInfo.reason}。
+                      与当前方案相比，主要差异：
+                      {getParamDiff(params, schemes.find(s => s.id === bestScheme.id)?.params || params).slice(0, 3).map(d => `${d.label}从${d.oldValue}${d.unit}调整为${d.newValue}${d.unit}`).join('、')}。
+                    </p>
+                  </div>
+                )}
+
+                {mostDiff.length > 0 && (
+                  <div>
+                    <h4 className="font-bold text-gray-700 mb-2">差异最大方案对比</h4>
+                    {mostDiff.map(s => {
+                      const diff = getParamDiff(params, s.params);
+                      return (
+                        <div key={s.id} className="ml-4 mb-3 p-3 bg-gray-50 border border-gray-200 rounded">
+                          <p className="font-medium text-gray-700 mb-1">与"{s.label}"相比：</p>
+                          <ul className="text-xs text-gray-600 space-y-0.5 pl-4 list-disc">
+                            {diff.slice(0, 4).map(d => (
+                              <li key={d.field}>
+                                {d.label}：{d.oldValue}{d.unit} → {d.newValue}{d.unit}
+                                <span className={`ml-2 ${d.isBetter === 'better' ? 'text-green-600' : d.isBetter === 'worse' ? 'text-red-600' : 'text-gray-400'}`}>
+                                  （{d.isBetter === 'better' ? '更优' : d.isBetter === 'worse' ? '较差' : '中性'}）
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="text-xs text-gray-500 mt-1">
+                            该方案合格率{(s.result.passedCount / s.result.totalCount * 100).toFixed(0)}%，结论为{s.result.overallPassed ? '通过' : '不通过'}。
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
             {schemes.length === 0 && (
               <div>
                 <h4 className="font-bold text-gray-700 mb-1">方案比选</h4>

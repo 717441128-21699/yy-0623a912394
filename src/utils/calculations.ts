@@ -1,7 +1,31 @@
-import type { SupportParams, CalculationResult, CheckItemResult, Suggestion, ValidationResult, ReportEnhancement, SchemeRecord, SchemeRankInfo } from '@/types';
+import type { SupportParams, CalculationResult, CheckItemResult, Suggestion, ValidationResult, ReportEnhancement, SchemeRecord, SchemeRankInfo, ParamDiff } from '@/types';
 import { getWoodProperty, getSteelPipeProperty, getParamRange, getFieldsForType, getSupportTypeConfig, CONCRETE_DENSITY, SAFETY_FACTOR, FASTENER_SLIP_RESISTANCE } from './materials';
 
 const fmt = (n: number, d: number = 3): number => Number(n.toFixed(d));
+
+const PARAM_LABEL_MAP: Record<string, string> = {
+  floorHeight: '层高', slabThickness: '板厚', beamWidth: '梁宽', beamHeight: '梁高',
+  poleSpacingX: '立杆纵距', poleSpacingY: '立杆横距', stepDistance: '步距',
+  constructionLoad: '施工荷载', woodSize: '木方规格', steelPipeType: '钢管型号',
+  templateThickness: '模板厚度', templateElasticModulus: '模板弹性模量',
+  topCantilever: '顶托悬臂长度', diagonalBrace: '纵横向剪刀撑',
+  scissorsBrace: '水平剪刀撑', sweepPole: '扫地杆', supportType: '支撑类型',
+};
+
+const PARAM_UNIT_MAP: Record<string, string> = {
+  floorHeight: 'm', slabThickness: 'mm', beamWidth: 'mm', beamHeight: 'mm',
+  poleSpacingX: 'm', poleSpacingY: 'm', stepDistance: 'm',
+  constructionLoad: 'kN/m²', templateThickness: 'mm', templateElasticModulus: 'N/mm²',
+  topCantilever: 'mm',
+};
+
+const BETTER_PARAMS: Record<string, 'larger' | 'smaller' | 'bool'> = {
+  poleSpacingX: 'smaller', poleSpacingY: 'smaller', stepDistance: 'smaller',
+  woodSize: 'larger', steelPipeType: 'larger', constructionLoad: 'smaller',
+  templateThickness: 'larger', templateElasticModulus: 'larger',
+  topCantilever: 'smaller', diagonalBrace: 'bool', scissorsBrace: 'bool', sweepPole: 'bool',
+  floorHeight: 'smaller', slabThickness: 'smaller', beamWidth: 'smaller', beamHeight: 'smaller',
+};
 
 const getTotalLoad = (params: SupportParams) => {
   const h = params.slabThickness / 1000;
@@ -247,6 +271,17 @@ export const getParamSnapshot = (params: SupportParams): string => {
   return keys.map(k => `${k}=${params[k]}`).join('|');
 };
 
+const getSafetyLevel = (safetyRatio: number, overallPassed: boolean): { level: SchemeRankInfo['safetyLevel']; label: string } => {
+  if (!overallPassed) {
+    if (safetyRatio >= 1.2) return { level: 'overLimit', label: '严重超限' };
+    if (safetyRatio >= 1.05) return { level: 'overLimit', label: '超限' };
+    return { level: 'overLimit', label: '超限临界' };
+  }
+  if (safetyRatio <= 0.7) return { level: 'sufficient', label: '储备充足' };
+  if (safetyRatio <= 0.9) return { level: 'sufficient', label: '储备尚可' };
+  return { level: 'critical', label: '临界状态' };
+};
+
 export const rankSchemes = (current: { result: CalculationResult; suggestions: Suggestion[]; label: string }, saved: SchemeRecord[]): { id: string; label: string; rankInfo: SchemeRankInfo }[] => {
   const all = [
     { id: '__current__', label: current.label, result: current.result, suggestions: current.suggestions },
@@ -255,18 +290,29 @@ export const rankSchemes = (current: { result: CalculationResult; suggestions: S
 
   const scored = all.map(a => {
     const passRate = a.result.totalCount > 0 ? a.result.passedCount / a.result.totalCount : 0;
-    const safetyMargin = a.result.weakestSafetyRatio > 0 ? 1 / a.result.weakestSafetyRatio : 0;
+    const safetyRatio = a.result.weakestSafetyRatio;
+    const safetyMargin = safetyRatio > 0 ? 1 / safetyRatio : 0;
+    const safetyInfo = getSafetyLevel(safetyRatio, a.result.overallPassed);
     const highCount = a.suggestions.filter(s => s.priority === 'high').length;
-    const score = passRate * 500 + safetyMargin * 300 - highCount * 100 + (a.result.overallPassed ? 200 : 0);
+    const midCount = a.suggestions.filter(s => s.priority === 'medium').length;
+    let score = 0;
+    score += passRate * 500;
+    score += a.result.overallPassed ? 300 : 0;
+    if (a.result.overallPassed) {
+      if (safetyInfo.level === 'sufficient') score += 200;
+      else if (safetyInfo.level === 'critical') score += 80;
+    } else {
+      score -= (safetyRatio - 1) * 200;
+    }
+    score -= highCount * 120;
+    score -= midCount * 40;
     const reasons: string[] = [];
     if (a.result.overallPassed) reasons.push('全部验算通过');
-    else reasons.push(`有${a.result.totalCount - a.result.passedCount}项不通过`);
-    if (safetyMargin >= 0.3) reasons.push('安全储备充足');
-    else if (safetyMargin >= 0.15) reasons.push('安全储备尚可');
-    else reasons.push('安全储备偏低');
-    if (highCount === 0) reasons.push('无高级别整改项');
-    else reasons.push(`${highCount}项高级别整改`);
-    return { id: a.id, label: a.label, score, passRate, safetyMargin, highCount, reason: reasons.join('，') };
+    else reasons.push(`${a.result.totalCount - a.result.passedCount}项未通过`);
+    reasons.push(safetyInfo.label);
+    if (highCount > 0) reasons.push(`${highCount}项高级别整改`);
+    else reasons.push('无高级别整改');
+    return { id: a.id, label: a.label, score, passRate, safetyMargin, safetyLevel: safetyInfo.level, safetyLabel: safetyInfo.label, highCount, reason: reasons.join('，') };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -279,9 +325,58 @@ export const rankSchemes = (current: { result: CalculationResult; suggestions: S
       reason: s.reason,
       passRate: fmt(s.passRate * 100, 1),
       safetyMargin: fmt(s.safetyMargin * 100, 1),
+      safetyLevel: s.safetyLevel,
       highIssueCount: s.highCount,
     },
   }));
+};
+
+export const getParamDiff = (oldParams: SupportParams, newParams: SupportParams): ParamDiff[] => {
+  const diffs: ParamDiff[] = [];
+  const keys: (keyof SupportParams)[] = [
+    'supportType', 'floorHeight', 'slabThickness', 'beamWidth', 'beamHeight',
+    'poleSpacingX', 'poleSpacingY', 'stepDistance', 'woodSize', 'steelPipeType',
+    'constructionLoad', 'templateThickness', 'templateElasticModulus',
+    'topCantilever', 'diagonalBrace', 'scissorsBrace', 'sweepPole',
+  ];
+  keys.forEach(k => {
+    const oldVal = oldParams[k];
+    const newVal = newParams[k];
+    if (oldVal === newVal) return;
+    const direction = BETTER_PARAMS[k];
+    let isBetter: 'better' | 'worse' | 'neutral' = 'neutral';
+    if (direction === 'smaller') {
+      if (typeof newVal === 'number' && typeof oldVal === 'number') isBetter = newVal < oldVal ? 'better' : 'worse';
+    } else if (direction === 'larger') {
+      if (typeof newVal === 'number' && typeof oldVal === 'number') isBetter = newVal > oldVal ? 'better' : 'worse';
+    } else if (direction === 'bool') {
+      isBetter = newVal === true && oldVal === false ? 'better' : 'worse';
+    }
+    diffs.push({
+      field: k,
+      label: PARAM_LABEL_MAP[k] || k,
+      oldValue: oldVal,
+      newValue: newVal,
+      unit: PARAM_UNIT_MAP[k] || '',
+      isBetter,
+    });
+  });
+  return diffs;
+};
+
+export const generateVersionNote = (diff: ParamDiff[], oldResult: CalculationResult | null, newResult: CalculationResult): string => {
+  if (!oldResult || diff.length === 0) return '初始版本';
+  const changes: string[] = [];
+  diff.slice(0, 5).forEach(d => {
+    const arrow = d.isBetter === 'better' ? '↓' : d.isBetter === 'worse' ? '↑' : '→';
+    changes.push(`${d.label}: ${d.oldValue}${d.unit}→${d.newValue}${d.unit}`);
+  });
+  const resultChange = newResult.overallPassed && !oldResult.overallPassed ? '（从不通过变为通过）'
+    : !newResult.overallPassed && oldResult.overallPassed ? '（从通过变为不通过）'
+    : newResult.weakestSafetyRatio < oldResult.weakestSafetyRatio ? '（安全储备提升）'
+    : newResult.weakestSafetyRatio > oldResult.weakestSafetyRatio ? '（安全储备下降）'
+    : '';
+  return `${changes.join('；')}${resultChange}`;
 };
 
 export const generateComparisonSummary = (params: SupportParams, result: CalculationResult, suggestions: Suggestion[], schemes: SchemeRecord[]): string => {
@@ -299,15 +394,14 @@ export const generateComparisonSummary = (params: SupportParams, result: Calcula
   } else if (bestRank && bestRank.id === '__current__') {
     parts.push('当前方案为推荐方案，综合表现最优。');
   }
-  const diffItems: string[] = [];
-  schemes.forEach(s => {
-    const diff: string[] = [];
-    if (s.params.poleSpacingX !== params.poleSpacingX) diff.push(`纵距${s.params.poleSpacingX}m vs ${params.poleSpacingX}m`);
-    if (s.params.poleSpacingY !== params.poleSpacingY) diff.push(`横距${s.params.poleSpacingY}m vs ${params.poleSpacingY}m`);
-    if (s.params.stepDistance !== params.stepDistance) diff.push(`步距${s.params.stepDistance}m vs ${params.stepDistance}m`);
-    if (s.params.woodSize !== params.woodSize) diff.push(`木方${s.params.woodSize} vs ${params.woodSize}`);
-    if (diff.length > 0) diffItems.push(`"${s.label}"：${diff.join('，')}`);
-  });
-  if (diffItems.length > 0) parts.push(`主要参数差异：${diffItems.join('；')}。`);
   return parts.join('');
+};
+
+export const getMostDiffSchemes = (params: SupportParams, schemes: SchemeRecord[], count: number = 2): SchemeRecord[] => {
+  const scored = schemes.map(s => {
+    const diff = getParamDiff(params, s.params);
+    return { scheme: s, diffCount: diff.length };
+  });
+  scored.sort((a, b) => b.diffCount - a.diffCount);
+  return scored.slice(0, count).map(s => s.scheme);
 };

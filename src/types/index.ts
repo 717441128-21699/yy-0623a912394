@@ -72,6 +72,9 @@ export interface SchemeRecord {
   suggestions: Suggestion[];
   savedAt: string;
   version: number;
+  paramSnapshot: string;
+  adoptedFrom?: string;
+  versionNote?: string;
 }
 
 export interface SchemeRankInfo {
@@ -80,7 +83,17 @@ export interface SchemeRankInfo {
   reason: string;
   passRate: number;
   safetyMargin: number;
+  safetyLevel: 'sufficient' | 'critical' | 'overLimit';
   highIssueCount: number;
+}
+
+export interface ParamDiff {
+  field: string;
+  label: string;
+  oldValue: number | string | boolean;
+  newValue: number | string | boolean;
+  unit: string;
+  isBetter: 'better' | 'worse' | 'neutral';
 }
 
 export interface MaterialProperty {

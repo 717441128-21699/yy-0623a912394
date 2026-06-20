@@ -10,7 +10,7 @@ import { rankSchemes } from '@/utils/calculations';
 import type { Suggestion, SchemeRankInfo } from '@/types';
 
 export const ResultPage: React.FC = () => {
-  const { result, suggestions, params, schemes, resultExpired, calculationVersion, goToStep, resetCalculation, saveScheme, deleteScheme } = useCalculationStore();
+  const { result, suggestions, params, schemes, resultExpired, calculationVersion, lastVersionDiff, previousResult, adoptedFrom, goToStep, resetCalculation, saveScheme, adoptScheme, deleteScheme } = useCalculationStore();
   const [showCompare, setShowCompare] = useState(false);
   const [schemeLabel, setSchemeLabel] = useState('');
   const [showSaveInput, setShowSaveInput] = useState(false);
@@ -62,6 +62,16 @@ export const ResultPage: React.FC = () => {
 
   return (
     <div className="container mx-auto px-4 py-6">
+      {adoptedFrom && !resultExpired && (
+        <div className="mb-4 p-4 bg-primary-50 border-2 border-primary-300 flex items-center gap-3">
+          <CheckCircle className="w-5 h-5 text-primary-500 flex-shrink-0" />
+          <div>
+            <p className="font-bold text-primary-700">当前方案采用自："{adoptedFrom}"</p>
+            <p className="text-sm text-primary-600">参数已加载为该方案配置，如需调整请修改参数后重新验算。</p>
+          </div>
+        </div>
+      )}
+
       {resultExpired && (
         <div className="mb-4 p-4 bg-warning-50 border-2 border-warning-300 flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 text-warning-500 flex-shrink-0" />
@@ -69,6 +79,32 @@ export const ResultPage: React.FC = () => {
             <p className="font-bold text-warning-700">验算结果已过期</p>
             <p className="text-sm text-warning-600">参数已修改，当前显示的结果基于修改前的参数。请重新点击"开始验算"获取最新结果。</p>
           </div>
+        </div>
+      )}
+
+      {lastVersionDiff.length > 0 && previousResult && !resultExpired && (
+        <div className="card p-4 mb-6 border-2 border-primary-200 bg-primary-50/50">
+          <h4 className="font-bold text-primary-700 mb-3 flex items-center gap-2">
+            <Clock className="w-4 h-4" />
+            版本变更（V{calculationVersion - 1} → V{calculationVersion}）
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {lastVersionDiff.slice(0, 6).map(d => (
+              <span key={d.field} className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded border ${d.isBetter === 'better' ? 'bg-success-50 text-success-700 border-success-200' : d.isBetter === 'worse' ? 'bg-danger-50 text-danger-700 border-danger-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                {d.label}: {d.oldValue}{d.unit} → {d.newValue}{d.unit}
+                {d.isBetter === 'better' && <span className="text-success-500">↑好</span>}
+                {d.isBetter === 'worse' && <span className="text-danger-500">↓差</span>}
+              </span>
+            ))}
+          </div>
+          <p className="text-xs text-primary-600 mt-2">
+            结论变化：
+            {result.overallPassed && !previousResult.overallPassed ? <span className="text-success-600 font-bold">从不通过变为通过 ✓</span>
+              : !result.overallPassed && previousResult.overallPassed ? <span className="text-danger-600 font-bold">从通过变为不通过 ✗</span>
+              : result.weakestSafetyRatio < previousResult.weakestSafetyRatio ? <span className="text-success-600">安全储备提升</span>
+              : result.weakestSafetyRatio > previousResult.weakestSafetyRatio ? <span className="text-danger-600">安全储备下降</span>
+              : <span className="text-gray-500">无明显变化</span>}
+          </p>
         </div>
       )}
 
@@ -172,9 +208,16 @@ export const ResultPage: React.FC = () => {
                           <p className="text-xs text-gray-500 mt-0.5">{r.rankInfo.reason}</p>
                         </div>
                       </div>
-                      <div className="text-right text-xs">
-                        <div className="text-gray-500">推荐得分 <span className="font-bold text-gray-800 text-sm">{r.rankInfo.score}</span></div>
-                        <div className="text-gray-400">合格率{r.rankInfo.passRate}% · 安全储备{r.rankInfo.safetyMargin}% · {r.rankInfo.highIssueCount}项高优</div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right text-xs">
+                          <div className="text-gray-500">推荐得分 <span className="font-bold text-gray-800 text-sm">{r.rankInfo.score}</span></div>
+                          <div className="text-gray-400">合格率{r.rankInfo.passRate}% · 安全储备{r.rankInfo.safetyMargin}%</div>
+                        </div>
+                        {r.id !== '__current__' && (
+                          <button onClick={() => adoptScheme(r.id)} className="px-3 py-1.5 text-xs bg-primary-500 text-white rounded hover:bg-primary-600 transition-colors">
+                            采用
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -1,10 +1,12 @@
 import { create } from 'zustand';
-import type { SupportType, SupportParams, ProjectInfo, CalculationResult, Suggestion, ValidationResult, SchemeRecord } from '@/types';
-import { validateParams, hasValidationErrors, performCalculation, generateSuggestions, getParamSnapshot } from '@/utils/calculations';
+import type { SupportType, SupportParams, ProjectInfo, CalculationResult, Suggestion, ValidationResult, SchemeRecord, ParamDiff } from '@/types';
+import { validateParams, hasValidationErrors, performCalculation, generateSuggestions, getParamSnapshot, getParamDiff, generateVersionNote } from '@/utils/calculations';
 
 interface CalculationState {
   projectInfo: ProjectInfo;
   params: SupportParams;
+  previousParams: SupportParams | null;
+  previousResult: CalculationResult | null;
   validationResults: ValidationResult[];
   result: CalculationResult | null;
   suggestions: Suggestion[];
@@ -13,6 +15,8 @@ interface CalculationState {
   resultParamSnapshot: string;
   schemes: SchemeRecord[];
   calculationVersion: number;
+  adoptedFrom: string | null;
+  lastVersionDiff: ParamDiff[];
 
   setProjectInfo: (info: Partial<ProjectInfo>) => void;
   setSupportType: (type: SupportType) => void;
@@ -23,6 +27,7 @@ interface CalculationState {
   goToStep: (step: 'input' | 'result' | 'report') => void;
   clearAll: () => void;
   saveScheme: (label: string) => void;
+  adoptScheme: (schemeId: string) => void;
   deleteScheme: (id: string) => void;
   clearSchemes: () => void;
 }
@@ -61,6 +66,8 @@ const KEY_PARAMS: (keyof SupportParams)[] = [
 export const useCalculationStore = create<CalculationState>((set, get) => ({
   projectInfo: initialProjectInfo,
   params: initialParams,
+  previousParams: null,
+  previousResult: null,
   validationResults: [],
   result: null,
   suggestions: [],
@@ -69,6 +76,8 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
   resultParamSnapshot: '',
   schemes: [],
   calculationVersion: 0,
+  adoptedFrom: null,
+  lastVersionDiff: [],
 
   setProjectInfo: (info) => {
     set((state) => ({ projectInfo: { ...state.projectInfo, ...info } }));
@@ -99,22 +108,29 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
   },
 
   performCalculation: () => {
-    const { params } = get();
+    const { params, result: prevResult, previousParams: prevParams } = get();
     const validation = validateParams(params);
     if (hasValidationErrors(validation)) {
       set({ validationResults: validation });
       return false;
     }
-    const result = performCalculation(params);
-    const suggestions = generateSuggestions(params, result);
+    const oldParams = prevResult ? prevParams : null;
+    const newResult = performCalculation(params);
+    const suggestions = generateSuggestions(params, newResult);
+    const diff = oldParams ? getParamDiff(oldParams, params) : [];
+    const versionNote = generateVersionNote(diff, prevResult, newResult);
     set({
-      result,
+      previousParams: prevResult ? { ...params } : null,
+      previousResult: prevResult ? { ...prevResult } : null,
+      result: newResult,
       suggestions,
       currentStep: 'result',
       resultExpired: false,
       resultParamSnapshot: getParamSnapshot(params),
       validationResults: validation,
       calculationVersion: get().calculationVersion + 1,
+      lastVersionDiff: diff,
+      adoptedFrom: null,
     });
     return true;
   },
@@ -137,6 +153,8 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
     set({
       projectInfo: initialProjectInfo,
       params: initialParams,
+      previousParams: null,
+      previousResult: null,
       validationResults: [],
       result: null,
       suggestions: [],
@@ -144,11 +162,13 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       resultExpired: false,
       resultParamSnapshot: '',
       calculationVersion: 0,
+      adoptedFrom: null,
+      lastVersionDiff: [],
     });
   },
 
   saveScheme: (label) => {
-    const { params, result, suggestions, calculationVersion } = get();
+    const { params, result, suggestions, calculationVersion, adoptedFrom } = get();
     if (!result) return;
     const scheme: SchemeRecord = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -158,8 +178,25 @@ export const useCalculationStore = create<CalculationState>((set, get) => ({
       suggestions: [...suggestions],
       savedAt: new Date().toLocaleString('zh-CN'),
       version: calculationVersion,
+      paramSnapshot: getParamSnapshot(params),
+      adoptedFrom: adoptedFrom || undefined,
     };
     set((state) => ({ schemes: [...state.schemes, scheme] }));
+  },
+
+  adoptScheme: (schemeId) => {
+    const scheme = get().schemes.find(s => s.id === schemeId);
+    if (!scheme) return;
+    set((state) => ({
+      params: { ...scheme.params },
+      result: { ...scheme.result },
+      suggestions: [...scheme.suggestions],
+      resultExpired: false,
+      resultParamSnapshot: scheme.paramSnapshot,
+      adoptedFrom: scheme.label,
+      currentStep: 'input',
+    }));
+    get().validateAllParams();
   },
 
   deleteScheme: (id) => {
