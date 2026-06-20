@@ -1,17 +1,20 @@
 import React, { useEffect } from 'react';
-import { Calculator, RotateCcw, Building2, User, Calendar } from 'lucide-react';
+import { Calculator, RotateCcw, Building2, User, Calendar, AlertTriangle } from 'lucide-react';
 import { useCalculationStore } from '@/store/calculationStore';
 import { SupportTypeSelector } from '@/components/SupportTypeSelector';
 import { FormInput } from '@/components/FormInput';
 import { ValidationPanel } from '@/components/ValidationPanel';
-import { WOOD_OPTIONS, STEEL_PIPE_OPTIONS } from '@/utils/materials';
+import { getFieldsForType, getGroupsForType, getSupportTypeConfig } from '@/utils/materials';
 import { hasValidationErrors } from '@/utils/calculations';
+import type { SupportParams, ParamFieldConfig } from '@/types';
 
 export const ParamsInput: React.FC = () => {
   const {
     projectInfo,
     params,
     validationResults,
+    resultExpired,
+    result,
     setProjectInfo,
     setSupportType,
     setParam,
@@ -20,25 +23,60 @@ export const ParamsInput: React.FC = () => {
     clearAll,
   } = useCalculationStore();
 
-  useEffect(() => {
-    validateAllParams();
-  }, []);
+  useEffect(() => { validateAllParams(); }, []);
 
-  const handleCalculate = () => {
-    const success = performCalculation();
-    if (!success) {
-      return;
-    }
-  };
-
+  const handleCalculate = () => { performCalculation(); };
   const hasErrors = hasValidationErrors(validationResults);
+  const getValidation = (field: string) => validationResults.find(v => v.field === field);
+  const fields = getFieldsForType(params.supportType);
+  const groups = getGroupsForType(params.supportType);
+  const config = getSupportTypeConfig(params.supportType);
 
-  const getValidation = (field: string) => {
-    return validationResults.find((v) => v.field === field);
+  const renderField = (f: ParamFieldConfig) => {
+    if (f.type === 'boolean') {
+      const checked = params[f.field as keyof SupportParams] as boolean;
+      return (
+        <div key={f.field} className="mb-4">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-gray-700">{f.label}</label>
+            <button
+              type="button"
+              onClick={() => setParam(f.field as keyof SupportParams, !checked)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${checked ? 'bg-primary-500' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <FormInput
+        key={f.field}
+        label={f.label}
+        field={f.field}
+        value={params[f.field as keyof SupportParams] as number | string}
+        unit={f.unit}
+        onChange={v => setParam(f.field as keyof SupportParams, v as number | string)}
+        type={f.type === 'select' ? 'select' : 'number'}
+        options={f.options}
+        step={f.step}
+        validation={getValidation(f.field)}
+      />
+    );
   };
 
   return (
     <div className="container mx-auto px-4 py-6">
+      {resultExpired && result && (
+        <div className="mb-4 p-4 bg-warning-50 border-2 border-warning-300 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-warning-500 flex-shrink-0" />
+          <div>
+            <p className="font-bold text-warning-700">验算结果已过期</p>
+            <p className="text-sm text-warning-600">参数已修改，当前验算结果不再有效。请重新点击"开始验算"获取最新结果。</p>
+          </div>
+        </div>
+      )}
       <div className="flex flex-col lg:flex-row gap-6">
         <div className="flex-1">
           <div className="card p-6 mb-6">
@@ -52,207 +90,60 @@ export const ParamsInput: React.FC = () => {
                   <Building2 className="w-4 h-4 text-gray-400" />
                   项目名称
                 </label>
-                <input
-                  type="text"
-                  value={projectInfo.projectName}
-                  onChange={(e) => setProjectInfo({ projectName: e.target.value })}
-                  placeholder="请输入项目名称"
-                  className="input-field text-left"
-                />
+                <input type="text" value={projectInfo.projectName} onChange={e => setProjectInfo({ projectName: e.target.value })} placeholder="请输入项目名称" className="input-field text-left" />
               </div>
               <div className="mb-4">
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-1">
                   <User className="w-4 h-4 text-gray-400" />
                   编制人
                 </label>
-                <input
-                  type="text"
-                  value={projectInfo.preparedBy}
-                  onChange={(e) => setProjectInfo({ preparedBy: e.target.value })}
-                  placeholder="请输入编制人"
-                  className="input-field text-left"
-                />
+                <input type="text" value={projectInfo.preparedBy} onChange={e => setProjectInfo({ preparedBy: e.target.value })} placeholder="请输入编制人" className="input-field text-left" />
               </div>
               <div className="mb-4">
                 <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-1">
                   <Calendar className="w-4 h-4 text-gray-400" />
                   编制日期
                 </label>
-                <input
-                  type="date"
-                  value={projectInfo.preparedDate}
-                  onChange={(e) => setProjectInfo({ preparedDate: e.target.value })}
-                  className="input-field text-left"
-                />
+                <input type="date" value={projectInfo.preparedDate} onChange={e => setProjectInfo({ preparedDate: e.target.value })} className="input-field text-left" />
               </div>
             </div>
           </div>
 
           <div className="card p-6 mb-6">
-            <SupportTypeSelector
-              selectedType={params.supportType}
-              onSelect={setSupportType}
-            />
+            <SupportTypeSelector selectedType={params.supportType} onSelect={setSupportType} />
+            {config && (
+              <div className="mt-4 p-3 bg-primary-50 border border-primary-200 text-sm">
+                <p className="font-medium text-primary-700 mb-1">验算重点</p>
+                <div className="flex flex-wrap gap-1">
+                  {config.checkFocus.map(f => (
+                    <span key={f} className="inline-block px-2 py-0.5 bg-white text-primary-600 text-xs border border-primary-200">{f}</span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="card p-6">
-              <h3 className="section-title">构件尺寸</h3>
-              <FormInput
-                label="层高"
-                field="floorHeight"
-                value={params.floorHeight}
-                unit="m"
-                onChange={(v) => setParam('floorHeight', v as number)}
-                step={0.1}
-                validation={getValidation('floorHeight')}
-              />
-              <FormInput
-                label="板厚"
-                field="slabThickness"
-                value={params.slabThickness}
-                unit="mm"
-                onChange={(v) => setParam('slabThickness', v as number)}
-                step={10}
-                validation={getValidation('slabThickness')}
-              />
-              <FormInput
-                label="梁宽"
-                field="beamWidth"
-                value={params.beamWidth}
-                unit="mm"
-                onChange={(v) => setParam('beamWidth', v as number)}
-                step={50}
-                validation={getValidation('beamWidth')}
-              />
-              <FormInput
-                label="梁高"
-                field="beamHeight"
-                value={params.beamHeight}
-                unit="mm"
-                onChange={(v) => setParam('beamHeight', v as number)}
-                step={50}
-                validation={getValidation('beamHeight')}
-              />
-            </div>
-
-            <div className="card p-6">
-              <h3 className="section-title">支撑参数</h3>
-              <FormInput
-                label="立杆纵距"
-                field="poleSpacingX"
-                value={params.poleSpacingX}
-                unit="m"
-                onChange={(v) => setParam('poleSpacingX', v as number)}
-                step={0.1}
-                validation={getValidation('poleSpacingX')}
-              />
-              <FormInput
-                label="立杆横距"
-                field="poleSpacingY"
-                value={params.poleSpacingY}
-                unit="m"
-                onChange={(v) => setParam('poleSpacingY', v as number)}
-                step={0.1}
-                validation={getValidation('poleSpacingY')}
-              />
-              <FormInput
-                label="步距"
-                field="stepDistance"
-                value={params.stepDistance}
-                unit="m"
-                onChange={(v) => setParam('stepDistance', v as number)}
-                step={0.1}
-                validation={getValidation('stepDistance')}
-              />
-              <FormInput
-                label="施工荷载"
-                field="constructionLoad"
-                value={params.constructionLoad}
-                unit="kN/m²"
-                onChange={(v) => setParam('constructionLoad', v as number)}
-                step={0.5}
-                validation={getValidation('constructionLoad')}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-            <div className="card p-6">
-              <h3 className="section-title">材料规格</h3>
-              <FormInput
-                label="木方规格"
-                field="woodSize"
-                value={params.woodSize}
-                unit="mm"
-                onChange={(v) => setParam('woodSize', v as string)}
-                type="select"
-                options={WOOD_OPTIONS}
-                validation={getValidation('woodSize')}
-              />
-              <FormInput
-                label="钢管型号"
-                field="steelPipeType"
-                value={params.steelPipeType}
-                unit="mm"
-                onChange={(v) => setParam('steelPipeType', v as string)}
-                type="select"
-                options={STEEL_PIPE_OPTIONS}
-                validation={getValidation('steelPipeType')}
-              />
-            </div>
-
-            <div className="card p-6">
-              <h3 className="section-title">操作说明</h3>
-              <div className="text-sm text-gray-600 space-y-3">
-                <div className="flex items-start gap-2">
-                  <div className="w-5 h-5 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                    1
-                  </div>
-                  <p>根据工程实际情况选择合适的支撑类型</p>
+            {groups.map(group => {
+              const groupFields = fields.filter(f => f.group === group);
+              if (groupFields.length === 0) return null;
+              return (
+                <div key={group} className="card p-6">
+                  <h3 className="section-title">{group}</h3>
+                  {groupFields.map(renderField)}
                 </div>
-                <div className="flex items-start gap-2">
-                  <div className="w-5 h-5 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                    2
-                  </div>
-                  <p>按照施工图纸准确录入各项参数</p>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="w-5 h-5 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                    3
-                  </div>
-                  <p>查看右侧参数校验表，确保所有参数完整有效</p>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="w-5 h-5 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
-                    4
-                  </div>
-                  <p>点击"开始验算"按钮进行安全验算</p>
-                </div>
-                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs">
-                  <strong>提示：</strong>本系统验算依据《建筑施工模板安全技术规范》JGJ162-2008 和《建筑施工扣件式钢管脚手架安全技术规范》JGJ130-2011，结果仅供参考，最终验算需经专业人员审核。
-                </div>
-              </div>
-            </div>
+              );
+            })}
           </div>
 
           <div className="flex justify-between items-center mt-6 no-print">
-            <button
-              onClick={clearAll}
-              className="btn-secondary flex items-center gap-2"
-            >
+            <button onClick={clearAll} className="btn-secondary flex items-center gap-2">
               <RotateCcw className="w-4 h-4" />
               重置参数
             </button>
-            <button
-              onClick={handleCalculate}
-              disabled={hasErrors}
-              className={`btn-primary flex items-center gap-2 ${
-                hasErrors ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
+            <button onClick={handleCalculate} disabled={hasErrors} className={`btn-primary flex items-center gap-2 ${hasErrors ? 'opacity-50 cursor-not-allowed' : ''}`}>
               <Calculator className="w-5 h-5" />
-              开始验算
+              {resultExpired ? '重新验算' : '开始验算'}
             </button>
           </div>
         </div>

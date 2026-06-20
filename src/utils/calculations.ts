@@ -1,364 +1,244 @@
-import type { SupportParams, CalculationResult, CheckItemResult, Suggestion, ValidationResult } from '@/types';
-import {
-  getWoodProperty,
-  getSteelPipeProperty,
-  getParamRange,
-  CONCRETE_DENSITY,
-  SAFETY_FACTOR,
-  FASTENER_SLIP_RESISTANCE,
-} from './materials';
+import type { SupportParams, CalculationResult, CheckItemResult, Suggestion, ValidationResult, ReportEnhancement } from '@/types';
+import { getWoodProperty, getSteelPipeProperty, getParamRange, getFieldsForType, getSupportTypeConfig, CONCRETE_DENSITY, SAFETY_FACTOR, FASTENER_SLIP_RESISTANCE } from './materials';
 
-const formatNumber = (num: number, decimals: number = 3): number => {
-  return Number(num.toFixed(decimals));
+const fmt = (n: number, d: number = 3): number => Number(n.toFixed(d));
+
+const getTotalLoad = (params: SupportParams) => {
+  const h = params.slabThickness / 1000;
+  const b = params.poleSpacingY;
+  const L = params.poleSpacingX;
+  const concreteLoad = CONCRETE_DENSITY * h * b * L;
+  const selfWeight = 0.5 * b * L;
+  const liveLoad = params.constructionLoad * b * L;
+  return { concreteLoad, selfWeight, liveLoad, totalLoad: (concreteLoad + selfWeight) * 1.2 + liveLoad * 1.4 };
 };
 
 export const validateParams = (params: SupportParams): ValidationResult[] => {
   const results: ValidationResult[] = [];
-  const fieldsToCheck = [
-    'floorHeight',
-    'slabThickness',
-    'beamWidth',
-    'beamHeight',
-    'poleSpacingX',
-    'poleSpacingY',
-    'stepDistance',
-    'constructionLoad',
-  ];
+  const fields = getFieldsForType(params.supportType);
 
-  fieldsToCheck.forEach(field => {
-    const range = getParamRange(field);
-    if (!range) return;
-
-    const value = params[field as keyof SupportParams] as number;
-    let status: 'valid' | 'missing' | 'outOfRange' = 'valid';
-
-    if (!value || value <= 0) {
-      status = 'missing';
-    } else if (value < range.min || value > range.max) {
-      status = 'outOfRange';
+  fields.forEach(f => {
+    if (f.type === 'boolean') return;
+    const value = params[f.field as keyof SupportParams];
+    if (f.type === 'select') {
+      if (!value) {
+        results.push({ field: f.field, label: f.label, status: 'missing', value: '', unit: f.unit });
+      }
+      return;
     }
-
-    results.push({
-      field,
-      label: range.label,
-      status,
-      value,
-      min: range.min,
-      max: range.max,
-      unit: range.unit,
-    });
+    const numVal = value as number;
+    const range = getParamRange(f.field);
+    let status: 'valid' | 'missing' | 'outOfRange' = 'valid';
+    if (!numVal || numVal <= 0) status = 'missing';
+    else if (range && (numVal < range.min || numVal > range.max)) status = 'outOfRange';
+    results.push({ field: f.field, label: f.label, status, value: numVal, min: range?.min, max: range?.max, unit: f.unit });
   });
-
-  if (!params.woodSize) {
-    results.push({
-      field: 'woodSize',
-      label: '木方规格',
-      status: 'missing',
-      value: '',
-      unit: 'mm',
-    });
-  }
-
-  if (!params.steelPipeType) {
-    results.push({
-      field: 'steelPipeType',
-      label: '钢管型号',
-      status: 'missing',
-      value: '',
-      unit: 'mm',
-    });
-  }
-
   return results;
 };
 
-export const hasValidationErrors = (results: ValidationResult[]): boolean => {
-  return results.some(r => r.status === 'missing');
+export const hasValidationErrors = (results: ValidationResult[]): boolean => results.some(r => r.status === 'missing');
+
+const calcTemplateBending = (params: SupportParams): CheckItemResult => {
+  const L = params.poleSpacingX;
+  const b = 1;
+  const h = params.templateThickness;
+  const E = params.templateElasticModulus;
+  const slabH = params.slabThickness / 1000;
+  const q = (CONCRETE_DENSITY * slabH * 1.2 + params.constructionLoad * 1.4 + 0.5 * 1.2);
+  const M = q * b * L * L / 8;
+  const W = b * h * h / 6;
+  const sigma = M * 1e6 / W;
+  const fm = E > 8000 ? 15 : 11;
+  return { name: '模板抗弯强度', category: '模板验算', calculatedValue: fmt(sigma), allowableValue: fm, unit: 'N/mm²', passed: sigma <= fm, formula: 'σ = M/W ≤ f_m', process: `q = ${fmt(q, 2)}kN/m\nM = ${fmt(q)}×1m×${L}m²/8 = ${fmt(M)}kN·m\nW = 1m×${h}mm²/6 = ${fmt(W)}mm³\nσ = ${fmt(M)}×10⁶ / ${fmt(W)} = ${fmt(sigma)}N/mm² ≤ ${fm}N/mm²` };
 };
 
-export const calculateBendingStrength = (params: SupportParams): CheckItemResult => {
+const calcTemplateDeflection = (params: SupportParams): CheckItemResult => {
+  const L = params.poleSpacingX;
+  const h = params.templateThickness;
+  const E = params.templateElasticModulus;
+  const slabH = params.slabThickness / 1000;
+  const q = CONCRETE_DENSITY * slabH + 0.5 + params.constructionLoad;
+  const I = 1 * Math.pow(h, 3) / 12;
+  const w = 5 * q * Math.pow(L * 1000, 4) / (384 * E * I);
+  const allowW = L * 1000 / 250;
+  return { name: '模板挠度', category: '模板验算', calculatedValue: fmt(w, 2), allowableValue: fmt(allowW, 2), unit: 'mm', passed: w <= allowW, formula: 'ω = 5qL⁴/(384EI) ≤ L/250', process: `q = ${fmt(q, 2)}kN/m(标准值)\nI = 1m×${h}mm³/12 = ${fmt(I)}mm⁴\nω = ${fmt(w, 2)}mm ≤ ${fmt(allowW, 2)}mm` };
+};
+
+const calcWoodBending = (params: SupportParams): CheckItemResult => {
   const wood = getWoodProperty(params.woodSize);
   const L = params.poleSpacingX;
   const b = params.poleSpacingY;
   const h = params.slabThickness / 1000;
-  const load = params.constructionLoad;
-
-  const concreteLoad = CONCRETE_DENSITY * h * b * L;
-  const selfWeight = 0.5 * b * L;
-  const liveLoad = load * b * L;
-  const totalLoad = (concreteLoad + selfWeight) * 1.2 + liveLoad * 1.4;
-
-  const maxMoment = (totalLoad * L * L) / 10;
-
-  const woodSize = params.woodSize.split('×').map(Number);
-  const woodWidth = woodSize[0] / 1000;
-  const woodHeight = woodSize[1] / 1000;
-  const W = (woodWidth * woodHeight * woodHeight) / 6;
-
-  const bendingStress = (maxMoment * 1000) / W / 1000;
-
-  const allowableStress = wood.bendingStrength;
-  const passed = bendingStress <= allowableStress;
-
-  return {
-    name: '抗弯强度验算',
-    calculatedValue: formatNumber(bendingStress),
-    allowableValue: allowableStress,
-    unit: 'N/mm²',
-    passed,
-    formula: 'σ = M/W ≤ f_m',
-    process: `M = ${formatNumber(totalLoad)}kN × ${L}m² / 10 = ${formatNumber(maxMoment)}kN·m\nW = ${formatNumber(woodWidth * 1000)}mm × ${formatNumber(woodHeight * 1000)}mm² / 6 = ${formatNumber(W * 1e9)}mm³\nσ = ${formatNumber(maxMoment * 1000)}N·m / ${formatNumber(W * 1e9)}mm³ = ${formatNumber(bendingStress)}N/mm²\n允许值: ${allowableStress}N/mm²`,
-  };
+  const { totalLoad } = getTotalLoad(params);
+  const M = totalLoad * L * L / 10;
+  const ws = params.woodSize.split('×').map(Number);
+  const W = (ws[0] / 1000) * Math.pow(ws[1] / 1000, 2) / 6;
+  const sigma = M * 1000 / W / 1000;
+  return { name: '木方抗弯强度', category: '木方验算', calculatedValue: fmt(sigma), allowableValue: wood.bendingStrength, unit: 'N/mm²', passed: sigma <= wood.bendingStrength, formula: 'σ = M/W ≤ f_m', process: `M = ${fmt(totalLoad)}kN×${L}m²/10 = ${fmt(M)}kN·m\nW = ${ws[0]}mm×${ws[1]}mm²/6 = ${fmt(W * 1e9)}mm³\nσ = ${fmt(sigma)}N/mm² ≤ ${wood.bendingStrength}N/mm²` };
 };
 
-export const calculateShearStrength = (params: SupportParams): CheckItemResult => {
+const calcWoodShear = (params: SupportParams): CheckItemResult => {
+  const wood = getWoodProperty(params.woodSize);
+  const { totalLoad } = getTotalLoad(params);
+  const V = 0.6 * totalLoad;
+  const ws = params.woodSize.split('×').map(Number);
+  const A = ws[0] / 1000 * ws[1] / 1000;
+  const tau = 1.5 * V * 1000 / A / 1000;
+  return { name: '木方抗剪强度', category: '木方验算', calculatedValue: fmt(tau), allowableValue: wood.shearStrength, unit: 'N/mm²', passed: tau <= wood.shearStrength, formula: 'τ = 3V/(2bh) ≤ f_v', process: `V = 0.6×${fmt(totalLoad)}kN = ${fmt(V)}kN\nτ = ${fmt(tau)}N/mm² ≤ ${wood.shearStrength}N/mm²` };
+};
+
+const calcWoodDeflection = (params: SupportParams): CheckItemResult => {
   const wood = getWoodProperty(params.woodSize);
   const L = params.poleSpacingX;
   const b = params.poleSpacingY;
   const h = params.slabThickness / 1000;
-  const load = params.constructionLoad;
-
   const concreteLoad = CONCRETE_DENSITY * h * b * L;
   const selfWeight = 0.5 * b * L;
-  const liveLoad = load * b * L;
-  const totalLoad = (concreteLoad + selfWeight) * 1.2 + liveLoad * 1.4;
-
-  const maxShear = 0.6 * totalLoad;
-
-  const woodSize = params.woodSize.split('×').map(Number);
-  const woodWidth = woodSize[0] / 1000;
-  const woodHeight = woodSize[1] / 1000;
-  const A = woodWidth * woodHeight;
-
-  const shearStress = (1.5 * maxShear * 1000) / A / 1000;
-
-  const allowableStress = wood.shearStrength;
-  const passed = shearStress <= allowableStress;
-
-  return {
-    name: '抗剪强度验算',
-    calculatedValue: formatNumber(shearStress),
-    allowableValue: allowableStress,
-    unit: 'N/mm²',
-    passed,
-    formula: 'τ = 3V/(2bh) ≤ f_v',
-    process: `V = 0.6 × ${formatNumber(totalLoad)}kN = ${formatNumber(maxShear)}kN\nA = ${formatNumber(woodWidth * 1000)}mm × ${formatNumber(woodHeight * 1000)}mm = ${formatNumber(A * 1e6)}mm²\nτ = 1.5 × ${formatNumber(maxShear * 1000)}N / ${formatNumber(A * 1e6)}mm² = ${formatNumber(shearStress)}N/mm²\n允许值: ${allowableStress}N/mm²`,
-  };
+  const q = (concreteLoad + selfWeight) / L;
+  const ws = params.woodSize.split('×').map(Number);
+  const I = (ws[0] / 1000) * Math.pow(ws[1] / 1000, 3) / 12;
+  const w = 5 * q * Math.pow(L * 1000, 4) / (384 * wood.elasticModulus * I * 1e12);
+  const allowW = L * 1000 / 250;
+  return { name: '木方挠度', category: '木方验算', calculatedValue: fmt(w, 2), allowableValue: fmt(allowW, 2), unit: 'mm', passed: w <= allowW, formula: 'ω = 5qL⁴/(384EI) ≤ L/250', process: `q = ${fmt(q, 2)}kN/m\nω = ${fmt(w, 2)}mm ≤ ${fmt(allowW, 2)}mm` };
 };
 
-export const calculateStiffness = (params: SupportParams): CheckItemResult => {
-  const wood = getWoodProperty(params.woodSize);
-  const L = params.poleSpacingX;
-  const b = params.poleSpacingY;
-  const h = params.slabThickness / 1000;
-
-  const concreteLoad = CONCRETE_DENSITY * h * b * L;
-  const selfWeight = 0.5 * b * L;
-  const totalLoad = concreteLoad + selfWeight;
-  const q = totalLoad / L;
-
-  const woodSize = params.woodSize.split('×').map(Number);
-  const woodWidth = woodSize[0] / 1000;
-  const woodHeight = woodSize[1] / 1000;
-  const I = (woodWidth * woodHeight * woodHeight * woodHeight) / 12;
-  const E = wood.elasticModulus;
-
-  const deflection = (5 * q * Math.pow(L * 1000, 4)) / (384 * E * I * 1e12);
-
-  const allowableDeflection = (L * 1000) / 250;
-  const passed = deflection <= allowableDeflection;
-
-  return {
-    name: '刚度（挠度）验算',
-    calculatedValue: formatNumber(deflection, 2),
-    allowableValue: formatNumber(allowableDeflection, 2),
-    unit: 'mm',
-    passed,
-    formula: 'ω = 5qL⁴/(384EI) ≤ L/250',
-    process: `q = ${formatNumber(totalLoad)}kN / ${L}m = ${formatNumber(q)}kN/m\nI = ${formatNumber(woodWidth * 1000)}mm × ${formatNumber(woodHeight * 1000)}mm³ / 12 = ${formatNumber(I * 1e12)}mm⁴\nω = 5 × ${formatNumber(q)}N/mm × ${formatNumber(L * 1000)}mm⁴ / (384 × ${E}N/mm² × ${formatNumber(I * 1e12)}mm⁴) = ${formatNumber(deflection, 2)}mm\n允许值: L/250 = ${formatNumber(L * 1000)}mm / 250 = ${formatNumber(allowableDeflection, 2)}mm`,
-  };
-};
-
-export const calculateStability = (params: SupportParams): CheckItemResult => {
+const calcStability = (params: SupportParams): CheckItemResult => {
   const steel = getSteelPipeProperty(params.steelPipeType);
   const L0 = params.stepDistance;
-  const b = params.poleSpacingY;
-  const L = params.poleSpacingX;
-  const h = params.slabThickness / 1000;
-  const load = params.constructionLoad;
-
-  const concreteLoad = CONCRETE_DENSITY * h * b * L;
-  const selfWeight = 0.5 * b * L;
-  const liveLoad = load * b * L;
-  const totalLoad = (concreteLoad + selfWeight) * 1.2 + liveLoad * 1.4;
-
-  const axialForce = totalLoad * SAFETY_FACTOR;
-
+  const { totalLoad } = getTotalLoad(params);
+  const N = totalLoad * SAFETY_FACTOR;
   const i = steel.outerDiameter / 4;
-  const lambda = (L0 * 1000) / i;
-
+  const lambda = L0 * 1000 / i;
   let phi: number;
-  if (lambda <= 91.1) {
-    phi = 1 / (1 + 0.0019 * lambda + 0.000135 * lambda * lambda);
-  } else {
-    phi = 235 / (0.0011 * lambda * lambda + 0.0003 * lambda + 1);
-    phi = phi / 205;
-  }
+  if (lambda <= 91.1) { phi = 1 / (1 + 0.0019 * lambda + 0.000135 * lambda * lambda); }
+  else { phi = 235 / (0.0011 * lambda * lambda + 0.0003 * lambda + 1); phi = phi / 205; }
   phi = Math.min(phi, 1);
-
-  const A = steel.sectionArea;
-  const stress = (axialForce * 1000) / (phi * A * 100) / 10;
-
-  const allowableStress = steel.bendingStrength;
-  const passed = stress <= allowableStress;
-
-  return {
-    name: '立杆稳定性验算',
-    calculatedValue: formatNumber(stress),
-    allowableValue: allowableStress,
-    unit: 'N/mm²',
-    passed,
-    formula: 'σ = N/(φA) ≤ f',
-    process: `N = ${formatNumber(totalLoad)}kN × ${SAFETY_FACTOR} = ${formatNumber(axialForce)}kN\nλ = ${L0}m / (${formatNumber(steel.outerDiameter)}mm / 4) = ${formatNumber(lambda, 1)}\nφ = ${formatNumber(phi, 3)}\nA = ${A}cm²\nσ = ${formatNumber(axialForce * 1000)}N / (${formatNumber(phi, 3)} × ${formatNumber(A * 100)}mm²) = ${formatNumber(stress)}N/mm²\n允许值: ${allowableStress}N/mm²`,
-  };
+  const sigma = N * 1000 / (phi * steel.sectionArea * 100) / 10;
+  return { name: '立杆稳定性', category: '立杆验算', calculatedValue: fmt(sigma), allowableValue: steel.bendingStrength, unit: 'N/mm²', passed: sigma <= steel.bendingStrength, formula: 'σ = N/(φA) ≤ f', process: `N = ${fmt(totalLoad)}kN×${SAFETY_FACTOR} = ${fmt(N)}kN\nλ = ${fmt(lambda, 1)}\nφ = ${fmt(phi, 3)}\nσ = ${fmt(sigma)}N/mm² ≤ ${steel.bendingStrength}N/mm²` };
 };
 
-export const calculateFastenerSliding = (params: SupportParams): CheckItemResult => {
-  const b = params.poleSpacingY;
-  const L = params.poleSpacingX;
-  const h = params.slabThickness / 1000;
-  const load = params.constructionLoad;
-
-  const concreteLoad = CONCRETE_DENSITY * h * b * L;
-  const selfWeight = 0.5 * b * L;
-  const liveLoad = load * b * L;
-  const totalLoad = (concreteLoad + selfWeight) * 1.2 + liveLoad * 1.4;
-
-  const shearForce = totalLoad;
-  const allowableForce = FASTENER_SLIP_RESISTANCE;
-  const passed = shearForce <= allowableForce;
-
-  return {
-    name: '扣件抗滑验算',
-    calculatedValue: formatNumber(shearForce, 2),
-    allowableValue: allowableForce,
-    unit: 'kN',
-    passed,
-    formula: 'R ≤ R_c',
-    process: `R = ${formatNumber(totalLoad, 2)}kN\nR_c = ${allowableForce}kN\n${formatNumber(shearForce, 2)}kN ≤ ${allowableForce}kN: ${passed ? '满足' : '不满足'}`,
-  };
+const calcPoleCapacity = (params: SupportParams): CheckItemResult => {
+  const steel = getSteelPipeProperty(params.steelPipeType);
+  const { totalLoad } = getTotalLoad(params);
+  const N = totalLoad * SAFETY_FACTOR;
+  const sigma = N * 1000 / (steel.sectionArea * 100);
+  return { name: '立杆承载力', category: '立杆验算', calculatedValue: fmt(sigma), allowableValue: steel.bendingStrength, unit: 'N/mm²', passed: sigma <= steel.bendingStrength, formula: 'σ = N/A ≤ f', process: `N = ${fmt(N)}kN\nA = ${steel.sectionArea}cm²\nσ = ${fmt(sigma)}N/mm² ≤ ${steel.bendingStrength}N/mm²` };
 };
+
+const calcFastenerSliding = (params: SupportParams): CheckItemResult => {
+  const { totalLoad } = getTotalLoad(params);
+  return { name: '扣件抗滑', category: '连接件验算', calculatedValue: fmt(totalLoad, 2), allowableValue: FASTENER_SLIP_RESISTANCE, unit: 'kN', passed: totalLoad <= FASTENER_SLIP_RESISTANCE, formula: 'R ≤ R_c(=8kN)', process: `R = ${fmt(totalLoad, 2)}kN ≤ ${FASTENER_SLIP_RESISTANCE}kN` };
+};
+
+const calcTopSupport = (params: SupportParams): CheckItemResult => {
+  const steel = getSteelPipeProperty(params.steelPipeType);
+  const a = params.topCantilever / 1000;
+  const L0 = params.stepDistance;
+  const calcLength = L0 + 2 * a;
+  const i = steel.outerDiameter / 4;
+  const lambda = calcLength * 1000 / i;
+  let phi = 1 / (1 + 0.0019 * lambda + 0.000135 * lambda * lambda);
+  phi = Math.min(phi, 1);
+  const { totalLoad } = getTotalLoad(params);
+  const N = totalLoad * SAFETY_FACTOR;
+  const sigma = N * 1000 / (phi * steel.sectionArea * 100) / 10;
+  return { name: '顶托验算', category: '立杆验算', calculatedValue: fmt(sigma), allowableValue: steel.bendingStrength, unit: 'N/mm²', passed: sigma <= steel.bendingStrength, formula: 'σ = N/(φA) ≤ f (含悬臂段)', process: `悬臂a = ${params.topCantilever}mm\n计算长度l₀ = ${L0}m + 2×${a}m = ${fmt(calcLength)}m\nλ = ${fmt(lambda, 1)}\nφ = ${fmt(phi, 3)}\nσ = ${fmt(sigma)}N/mm² ≤ ${steel.bendingStrength}N/mm²` };
+};
+
+const calcWallConnector = (params: SupportParams): CheckItemResult => {
+  const stepDist = params.stepDistance;
+  const spacing = 2 * stepDist;
+  const windLoad = 0.5;
+  const Nl = 1.4 * windLoad * spacing;
+  const NlAllow = params.diagonalBrace ? 12.0 : 8.0;
+  return { name: '连墙件验算', category: '连接件验算', calculatedValue: fmt(Nl, 2), allowableValue: NlAllow, unit: 'kN', passed: Nl <= NlAllow, formula: 'N_l ≤ N_l^{vc}', process: `连墙件间距${fmt(spacing)}m\n风荷载产生的轴向力N_l = ${fmt(Nl, 2)}kN\n允许值 = ${NlAllow}kN\n${fmt(Nl, 2)}kN ≤ ${NlAllow}kN` };
+};
+
+const slabCalculations = (params: SupportParams): CheckItemResult[] => [
+  calcTemplateBending(params),
+  calcTemplateDeflection(params),
+  calcWoodBending(params),
+  calcWoodShear(params),
+  calcWoodDeflection(params),
+  calcStability(params),
+  calcFastenerSliding(params),
+];
+
+const fullSupportCalculations = (params: SupportParams): CheckItemResult[] => [
+  calcStability(params),
+  calcPoleCapacity(params),
+  calcTopSupport(params),
+  calcFastenerSliding(params),
+  calcWoodBending(params),
+];
+
+const fastenerFrameCalculations = (params: SupportParams): CheckItemResult[] => [
+  calcStability(params),
+  calcPoleCapacity(params),
+  calcFastenerSliding(params),
+  calcWallConnector(params),
+  calcTopSupport(params),
+];
 
 export const performCalculation = (params: SupportParams): CalculationResult => {
-  const bendingStrength = calculateBendingStrength(params);
-  const shearStrength = calculateShearStrength(params);
-  const stiffness = calculateStiffness(params);
-  const stability = calculateStability(params);
-  const fastenerSliding = calculateFastenerSliding(params);
-
-  const items = [bendingStrength, shearStrength, stiffness, stability, fastenerSliding];
-  const ratios = items.map(item => item.allowableValue > 0 ? item.calculatedValue / item.allowableValue : 999);
-  const maxRatioIndex = ratios.indexOf(Math.max(...ratios));
-  const weakestItem = items[maxRatioIndex].name;
-  const weakestSafetyRatio = ratios[maxRatioIndex];
-
-  const overallPassed = items.every(item => item.passed);
-
+  let items: CheckItemResult[];
+  switch (params.supportType) {
+    case 'slab': items = slabCalculations(params); break;
+    case 'fullSupport': items = fullSupportCalculations(params); break;
+    case 'fastenerFrame': items = fastenerFrameCalculations(params); break;
+    default: items = slabCalculations(params);
+  }
+  const ratios = items.map(it => it.allowableValue > 0 ? it.calculatedValue / it.allowableValue : 999);
+  const maxIdx = ratios.indexOf(Math.max(...ratios));
+  const passedCount = items.filter(it => it.passed).length;
   return {
-    bendingStrength,
-    shearStrength,
-    stiffness,
-    stability,
-    fastenerSliding,
-    weakestItem,
-    weakestSafetyRatio: formatNumber(weakestSafetyRatio, 3),
-    overallPassed,
+    supportType: params.supportType,
+    items,
+    weakestItem: items[maxIdx].name,
+    weakestSafetyRatio: fmt(ratios[maxIdx]),
+    overallPassed: items.every(it => it.passed),
+    passedCount,
+    totalCount: items.length,
   };
 };
 
 export const generateSuggestions = (params: SupportParams, result: CalculationResult): Suggestion[] => {
   const suggestions: Suggestion[] = [];
-
-  if (!result.bendingStrength.passed) {
-    suggestions.push({
-      item: '抗弯强度不足',
-      problem: `模板抗弯应力 ${result.bendingStrength.calculatedValue}N/mm² 超过允许值 ${result.bendingStrength.allowableValue}N/mm²`,
-      suggestion: '建议减小立杆纵距或增大木方截面尺寸',
-      priority: 'high',
-    });
-  }
-
-  if (!result.shearStrength.passed) {
-    suggestions.push({
-      item: '抗剪强度不足',
-      problem: `模板抗剪应力 ${result.shearStrength.calculatedValue}N/mm² 超过允许值 ${result.shearStrength.allowableValue}N/mm²`,
-      suggestion: '建议减小立杆间距或增加木方数量',
-      priority: 'high',
-    });
-  }
-
-  if (!result.stiffness.passed) {
-    suggestions.push({
-      item: '刚度不足',
-      problem: `模板挠度 ${result.stiffness.calculatedValue}mm 超过允许值 ${result.stiffness.allowableValue}mm`,
-      suggestion: '建议减小立杆纵距或增大木方截面高度',
-      priority: 'high',
-    });
-  }
-
-  if (!result.stability.passed) {
-    suggestions.push({
-      item: '立杆稳定性不足',
-      problem: `立杆应力 ${result.stability.calculatedValue}N/mm² 超过允许值 ${result.stability.allowableValue}N/mm²`,
-      suggestion: '建议减小立杆间距或步距，或增大钢管壁厚',
-      priority: 'high',
-    });
-  }
-
-  if (!result.fastenerSliding.passed) {
-    suggestions.push({
-      item: '扣件抗滑不足',
-      problem: `扣件反力 ${result.fastenerSliding.calculatedValue}kN 超过允许值 ${result.fastenerSliding.allowableValue}kN`,
-      suggestion: '建议减小立杆间距或增加防滑扣件',
-      priority: 'high',
-    });
-  }
-
-  if (params.stepDistance > 1.8) {
-    suggestions.push({
-      item: '步距偏大',
-      problem: `步距 ${params.stepDistance}m 超出常用范围 1.2-1.8m`,
-      suggestion: '建议将步距减小至1.8m以内，以提高立杆稳定性',
-      priority: 'medium',
-    });
-  }
-
-  if (params.poleSpacingX > 1.5 || params.poleSpacingY > 1.2) {
-    suggestions.push({
-      item: '立杆间距偏大',
-      problem: `立杆纵距 ${params.poleSpacingX}m 或横距 ${params.poleSpacingY}m 偏大`,
-      suggestion: '建议立杆纵距不超过1.5m，横距不超过1.2m',
-      priority: 'medium',
-    });
-  }
-
-  if (params.constructionLoad > 3.0) {
-    suggestions.push({
-      item: '施工荷载偏大',
-      problem: `施工荷载 ${params.constructionLoad}kN/m² 较大`,
-      suggestion: '建议控制施工荷载在3.0kN/m²以内，或进行专项设计',
-      priority: 'low',
-    });
-  }
-
-  if (result.overallPassed && result.weakestSafetyRatio > 0.85) {
-    suggestions.push({
-      item: '安全储备偏低',
-      problem: `最薄弱项"${result.weakestItem}"安全储备为 ${(1 / result.weakestSafetyRatio * 100).toFixed(1)}%`,
-      suggestion: '建议适当优化参数以提高安全储备',
-      priority: 'low',
-    });
-  }
-
+  result.items.forEach(it => {
+    if (!it.passed) {
+      let sug = '';
+      if (it.category === '模板验算') sug = '建议减小立杆间距或增加模板厚度';
+      else if (it.category === '木方验算' && it.name.includes('抗弯')) sug = '建议减小立杆纵距或增大木方截面尺寸';
+      else if (it.category === '木方验算' && it.name.includes('抗剪')) sug = '建议减小立杆间距或增加木方数量';
+      else if (it.category === '木方验算' && it.name.includes('挠度')) sug = '建议减小立杆纵距或增大木方截面高度';
+      else if (it.name === '立杆稳定性') sug = '建议减小立杆间距或步距，或增大钢管壁厚';
+      else if (it.name === '立杆承载力') sug = '建议减小立杆间距或选用更大规格钢管';
+      else if (it.name === '扣件抗滑') sug = '建议减小立杆间距或增加防滑扣件';
+      else if (it.name === '顶托验算') sug = '建议缩短顶托悬臂长度或减小步距';
+      else if (it.name === '连墙件验算') sug = '建议加密连墙件或设置剪刀撑';
+      else sug = '建议调整相关参数以满足规范要求';
+      suggestions.push({ item: `${it.name}不满足`, problem: `${it.name}: 计算值${it.calculatedValue}${it.unit} 超过允许值${it.allowableValue}${it.unit}`, suggestion: sug, priority: 'high' });
+    }
+  });
+  if (params.stepDistance > 1.8) suggestions.push({ item: '步距偏大', problem: `步距${params.stepDistance}m超出常用范围`, suggestion: '建议步距不大于1.8m', priority: 'medium' });
+  if (params.topCantilever > 500) suggestions.push({ item: '顶托悬臂偏长', problem: `顶托悬臂${params.topCantilever}mm偏大`, suggestion: '建议顶托悬臂长度不超过500mm(JGJ130-2011第6.9.4条)', priority: 'medium' });
+  if (params.supportType !== 'slab' && !params.diagonalBrace) suggestions.push({ item: '缺少剪刀撑', problem: '未设置纵横向剪刀撑', suggestion: '规范要求满堂架和扣件式架必须设置剪刀撑', priority: 'high' });
+  if (params.supportType !== 'slab' && !params.sweepPole) suggestions.push({ item: '缺少扫地杆', problem: '未设置扫地杆', suggestion: '规范要求必须设置纵横向扫地杆', priority: 'high' });
+  if (result.overallPassed && result.weakestSafetyRatio > 0.85) suggestions.push({ item: '安全储备偏低', problem: `最薄弱项"${result.weakestItem}"安全储备为${(1 / result.weakestSafetyRatio * 100).toFixed(1)}%`, suggestion: '建议适当优化参数以提高安全储备', priority: 'low' });
   return suggestions;
+};
+
+export const generateReportEnhancement = (params: SupportParams, result: CalculationResult): ReportEnhancement => {
+  const config = getSupportTypeConfig(params.supportType);
+  if (!config) return { standards: [], loadCombination: '', worstCaseDesc: '', reviewNote: '' };
+  const failedItems = result.items.filter(it => !it.passed).map(it => it.name);
+  const reviewNote = result.overallPassed
+    ? `本方案验算全部通过，最薄弱项为"${result.weakestItem}"（安全储备${(1 / result.weakestSafetyRatio * 100).toFixed(1)}%）。建议在实际施工中严格按本方案参数搭设，并加强过程检查。本计算书作为专项方案附件，需经项目技术负责人审核、总监理工程师审批后方可实施。`
+    : `本方案验算未全部通过，未通过项：${failedItems.join('、')}。须按整改建议调整参数后重新验算，直至全部通过后方可实施。本计算书须经项目技术负责人审核、总监理工程师审批。`;
+  return { standards: config.standards, loadCombination: config.loadCombination, worstCaseDesc: config.worstCaseDesc, reviewNote };
+};
+
+export const getParamSnapshot = (params: SupportParams): string => {
+  const keys: (keyof SupportParams)[] = ['supportType', 'poleSpacingX', 'poleSpacingY', 'stepDistance', 'woodSize', 'steelPipeType', 'constructionLoad', 'slabThickness', 'topCantilever'];
+  return keys.map(k => `${k}=${params[k]}`).join('|');
 };

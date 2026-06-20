@@ -18,6 +18,12 @@ export interface SupportParams {
   woodSize: string;
   steelPipeType: string;
   constructionLoad: number;
+  templateThickness: number;
+  templateElasticModulus: number;
+  diagonalBrace: boolean;
+  scissorsBrace: boolean;
+  sweepPole: boolean;
+  topCantilever: number;
 }
 
 export interface ValidationResult {
@@ -32,6 +38,7 @@ export interface ValidationResult {
 
 export interface CheckItemResult {
   name: string;
+  category: string;
   calculatedValue: number;
   allowableValue: number;
   unit: string;
@@ -41,14 +48,13 @@ export interface CheckItemResult {
 }
 
 export interface CalculationResult {
-  bendingStrength: CheckItemResult;
-  shearStrength: CheckItemResult;
-  stiffness: CheckItemResult;
-  stability: CheckItemResult;
-  fastenerSliding: CheckItemResult;
+  supportType: SupportType;
+  items: CheckItemResult[];
   weakestItem: string;
   weakestSafetyRatio: number;
   overallPassed: boolean;
+  passedCount: number;
+  totalCount: number;
 }
 
 export interface Suggestion {
@@ -58,12 +64,13 @@ export interface Suggestion {
   priority: 'high' | 'medium' | 'low';
 }
 
-export interface CalculationReport {
-  projectInfo: ProjectInfo;
+export interface SchemeRecord {
+  id: string;
+  label: string;
   params: SupportParams;
   result: CalculationResult;
   suggestions: Suggestion[];
-  generatedAt: string;
+  savedAt: string;
 }
 
 export interface MaterialProperty {
@@ -84,9 +91,32 @@ export interface ParamRange {
   required: boolean;
 }
 
+export interface ParamFieldConfig {
+  field: string;
+  label: string;
+  unit: string;
+  type: 'number' | 'select' | 'boolean';
+  options?: string[];
+  step?: number;
+  defaultValue: number | string | boolean;
+  group: string;
+  supportTypes: SupportType[];
+}
+
 export interface SupportTypeConfig {
   type: SupportType;
   name: string;
   description: string;
   icon: string;
+  standards: string[];
+  loadCombination: string;
+  checkFocus: string[];
+  worstCaseDesc: string;
+}
+
+export interface ReportEnhancement {
+  standards: string[];
+  loadCombination: string;
+  worstCaseDesc: string;
+  reviewNote: string;
 }

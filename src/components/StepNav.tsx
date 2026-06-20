@@ -1,21 +1,22 @@
 import React from 'react';
-import { ClipboardList, Calculator, FileText, CheckCircle2 } from 'lucide-react';
+import { ClipboardList, Calculator, FileText, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface StepNavProps {
   currentStep: 'input' | 'result' | 'report';
   onStepChange?: (step: 'input' | 'result' | 'report') => void;
   hasResult?: boolean;
+  resultExpired?: boolean;
 }
 
 const steps = [
-  { id: 'input', label: '参数录入', icon: ClipboardList, number: 1 },
-  { id: 'result', label: '验算结果', icon: Calculator, number: 2 },
-  { id: 'report', label: '报告导出', icon: FileText, number: 3 },
-] as const;
+  { id: 'input' as const, label: '参数录入', icon: ClipboardList, number: 1 },
+  { id: 'result' as const, label: '验算结果', icon: Calculator, number: 2 },
+  { id: 'report' as const, label: '报告导出', icon: FileText, number: 3 },
+];
 
-export const StepNav: React.FC<StepNavProps> = ({ currentStep, onStepChange, hasResult }) => {
-  const currentIndex = steps.findIndex((s) => s.id === currentStep);
+export const StepNav: React.FC<StepNavProps> = ({ currentStep, onStepChange, hasResult, resultExpired }) => {
+  const currentIndex = steps.findIndex(s => s.id === currentStep);
 
   return (
     <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -35,8 +36,8 @@ export const StepNav: React.FC<StepNavProps> = ({ currentStep, onStepChange, has
             {steps.map((step, index) => {
               const Icon = step.icon;
               const isActive = step.id === currentStep;
-              const isCompleted = index < currentIndex || (hasResult && index <= currentIndex);
-              const canClick = onStepChange && (isCompleted || (index === 0) || (index === 2 && hasResult));
+              const isCompleted = index < currentIndex || (hasResult && index <= currentIndex && !resultExpired);
+              const canClick = onStepChange && (index === 0 || (index <= currentIndex && hasResult && !resultExpired) || (index === 1 && hasResult));
 
               return (
                 <React.Fragment key={step.id}>
@@ -50,44 +51,28 @@ export const StepNav: React.FC<StepNavProps> = ({ currentStep, onStepChange, has
                     )}
                     onClick={() => canClick && onStepChange?.(step.id)}
                   >
-                    <div
-                      className={cn(
-                        'w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold border-2',
-                        isActive && 'bg-primary-500 border-primary-500 text-white',
-                        isCompleted && !isActive && 'bg-success-500 border-success-500 text-white',
-                        !isActive && !isCompleted && 'border-gray-300 text-gray-400'
-                      )}
-                    >
-                      {isCompleted && !isActive ? (
-                        <CheckCircle2 className="w-4 h-4" />
-                      ) : (
-                        step.number
-                      )}
+                    <div className={cn(
+                      'w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold border-2',
+                      isActive && 'bg-primary-500 border-primary-500 text-white',
+                      isCompleted && !isActive && 'bg-success-500 border-success-500 text-white',
+                      !isActive && !isCompleted && 'border-gray-300 text-gray-400'
+                    )}>
+                      {isCompleted && !isActive ? <CheckCircle2 className="w-4 h-4" /> : step.number}
                     </div>
-                    <span
-                      className={cn(
-                        'text-sm font-medium hidden sm:inline',
-                        isActive && 'text-primary-700',
-                        !isActive && !isCompleted && 'text-gray-400'
-                      )}
-                    >
+                    <span className={cn(
+                      'text-sm font-medium hidden sm:inline',
+                      isActive && 'text-primary-700',
+                      !isActive && !isCompleted && 'text-gray-400'
+                    )}>
                       {step.label}
                     </span>
-                    <Icon
-                      className={cn(
-                        'w-4 h-4 hidden md:inline',
-                        isActive && 'text-primary-500',
-                        !isActive && !isCompleted && 'text-gray-300'
-                      )}
-                    />
+                    <Icon className={cn('w-4 h-4 hidden md:inline', isActive && 'text-primary-500', !isActive && !isCompleted && 'text-gray-300')} />
+                    {resultExpired && step.id !== 'input' && (
+                      <AlertTriangle className="w-3 h-3 text-warning-500" />
+                    )}
                   </li>
                   {index < steps.length - 1 && (
-                    <div
-                      className={cn(
-                        'w-8 h-0.5',
-                        index < currentIndex ? 'bg-success-500' : 'bg-gray-200'
-                      )}
-                    />
+                    <div className={cn('w-8 h-0.5', index < currentIndex ? 'bg-success-500' : 'bg-gray-200')} />
                   )}
                 </React.Fragment>
               );

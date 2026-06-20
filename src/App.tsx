@@ -5,28 +5,20 @@ import { ReportPage } from '@/pages/ReportPage';
 import { useCalculationStore } from '@/store/calculationStore';
 
 export default function App() {
-  const { currentStep, result, goToStep } = useCalculationStore();
+  const { currentStep, result, resultExpired, goToStep } = useCalculationStore();
 
   const renderPage = () => {
     switch (currentStep) {
-      case 'input':
-        return <ParamsInput />;
-      case 'result':
-        return <ResultPage />;
-      case 'report':
-        return <ReportPage />;
-      default:
-        return <ParamsInput />;
+      case 'input': return <ParamsInput />;
+      case 'result': return <ResultPage />;
+      case 'report': return <ReportPage />;
+      default: return <ParamsInput />;
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <StepNav
-        currentStep={currentStep}
-        onStepChange={goToStep}
-        hasResult={!!result}
-      />
+      <StepNav currentStep={currentStep} onStepChange={goToStep} hasResult={!!result && !resultExpired} resultExpired={resultExpired && !!result} />
       <main>{renderPage()}</main>
     </div>
   );
